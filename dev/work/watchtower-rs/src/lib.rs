@@ -9,6 +9,9 @@ use std::error::Error as StdError;
 use std::fmt;
 use std::time::Duration;
 
+pub mod filters;
+pub mod types;
+
 /// Shared result type for the library.
 pub type Result<T> = std::result::Result<T, Error>;
 
