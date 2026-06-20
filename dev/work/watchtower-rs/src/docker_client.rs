@@ -6,7 +6,7 @@
 //! the deterministic parts that can be exercised without a live daemon:
 //! warning strategy selection and network alias normalization.
 
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 
 use crate::registry::trust;
 use crate::types::FilterableContainer;
@@ -34,7 +34,7 @@ pub struct NetworkEndpoint {
 /// Networking configuration snapshot.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct NetworkingConfig {
-    pub endpoints: BTreeMap<String, NetworkEndpoint>,
+    pub endpoints: HashMap<String, NetworkEndpoint>,
 }
 
 /// Return whether the Docker client should warn for a HEAD failure.
@@ -73,7 +73,7 @@ pub fn normalize_network_config(mut config: NetworkingConfig, container_id_short
 /// Return a network config containing only the first endpoint.
 #[must_use]
 pub fn simple_network_config(config: &NetworkingConfig) -> NetworkingConfig {
-    let mut endpoints = BTreeMap::new();
+    let mut endpoints = HashMap::new();
 
     if let Some((name, endpoint)) = config.endpoints.iter().next() {
         endpoints.insert(name.clone(), endpoint.clone());
@@ -133,7 +133,7 @@ mod tests {
 
     #[test]
     fn normalize_network_config_removes_container_id_aliases_only() {
-        let mut endpoints = BTreeMap::new();
+        let mut endpoints = HashMap::new();
         endpoints.insert("bridge".to_string(), endpoint(&["abc123", "db", "redis"]));
         endpoints.insert("other".to_string(), endpoint(&["abc123", "cache"]));
 
@@ -152,7 +152,7 @@ mod tests {
 
     #[test]
     fn simple_network_config_keeps_only_the_first_endpoint() {
-        let mut endpoints = BTreeMap::new();
+        let mut endpoints = HashMap::new();
         endpoints.insert("bridge".to_string(), endpoint(&["db"]));
         endpoints.insert("other".to_string(), endpoint(&["cache"]));
 
@@ -160,6 +160,7 @@ mod tests {
         let simple = simple_network_config(&config);
 
         assert_eq!(simple.endpoints.len(), 1);
-        assert!(simple.endpoints.contains_key("bridge"));
+        let endpoint = simple.endpoints.values().next().unwrap();
+        assert!(endpoint.aliases == vec!["db".to_string()] || endpoint.aliases == vec!["cache".to_string()]);
     }
 }
