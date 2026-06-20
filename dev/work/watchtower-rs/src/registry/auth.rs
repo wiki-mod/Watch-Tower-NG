@@ -294,7 +294,10 @@ mod tests {
         .unwrap()
         {
             AuthScheme::Bearer(bearer) => bearer,
-            AuthScheme::Basic => panic!("expected bearer challenge"),
+            AuthScheme::Basic => {
+                assert!(false, "expected bearer challenge");
+                unreachable!();
+            }
         };
 
         assert_eq!(bearer.realm, "https://ghcr.io/token");
@@ -368,6 +371,20 @@ mod tests {
         assert_eq!(
             url,
             "https://ghcr.io/token?scope=repository%3Awatchtower%3Apull&service=ghcr.io"
+        );
+    }
+
+    #[test]
+    fn builds_bearer_auth_url_for_implicit_docker_hub_references() {
+        let url = build_bearer_auth_url(
+            "bearer realm=\"https://registry-1.docker.io/token\",service=\"registry.docker.io\"",
+            "ubuntu",
+        )
+        .unwrap();
+
+        assert_eq!(
+            url,
+            "https://registry-1.docker.io/token?scope=repository%3Alibrary%2Fubuntu%3Apull&service=registry.docker.io"
         );
     }
 

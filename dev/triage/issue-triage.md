@@ -17,6 +17,21 @@ Scope: legacy Watchtower issues that matter for the Rust rewrite and current par
 - Feature requests: none from the inspected set
 - Stale/archive-only items: #2067
 
+## GitHub Scan Notes
+
+Latest quick scan against the upstream issue tracker showed these additional items as relevant to the Rust rewrite:
+
+- Parity bugs:
+  - #1213 `Panic on update`
+  - #1217 `Watchtower may remove images that are still needed`
+  - #1654 `Auth issues with an up-to-date private GitLab instance`
+  - #1999 `Container does not get updated`
+- Lower priority migration noise or UX regressions:
+  - #880 `Why do I still receive "Could not do a head request, falling back to regular pull." ?`
+  - #1926 `Discord notifications changed format`
+
+Keep these in the rewrite backlog only when they map to a concrete runtime surface that still exists in the Rust port. Closed status does not make a symptom irrelevant if the legacy behavior must be preserved or the bug still reproduces.
+
 ## Notes
 
 - Keep this list narrow: only promote items into the rewrite backlog when they map to a concrete runtime gap, migration dependency, or cleanup behavior we need to preserve.

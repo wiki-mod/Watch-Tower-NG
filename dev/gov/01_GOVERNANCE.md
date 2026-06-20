@@ -40,11 +40,11 @@ Verification policy:
 - Treat helper-script contract mistakes as process failures.
 
 Tooling policy:
-- If `sccache` is used, `redis` and `sccache-dist` are mandatory for every build or test run that relies on cache distribution.
+- `sccache` is mandatory for build and test execution in this workspace.
 - Redis endpoint: `192.168.1.230`
 - sccache-dist endpoint: `192.168.1.220`
-- Using `sccache` without both Redis and sccache-dist configured is not allowed.
-- `sccache` usage is only permitted when both endpoints are reachable and configured; this is a hard requirement, not a recommendation.
+- Running builds or tests without `sccache`, or with only one of the two endpoints configured, is not allowed.
+- Both Redis and `sccache-dist` must be reachable and configured before any build or test run starts.
 
 Delivery policy:
 - Keep the code modern, commented, and understandable for humans.
