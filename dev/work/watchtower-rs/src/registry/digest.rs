@@ -90,7 +90,7 @@ pub fn compare_digest<D: AsRef<str>>(
 
 /// Fetch the remote digest via a `HEAD` request.
 pub fn get_digest(url: &str, token: &str) -> Result<String> {
-    if token.trim().is_empty() {
+    if token.is_empty() {
         return Err(DigestError::MissingToken);
     }
 
@@ -122,19 +122,17 @@ where
     D: AsRef<str>,
     F: FnOnce(&str, &str) -> Result<String>,
 {
-    if repo_digests.is_empty() {
-        return Err(DigestError::MissingImageInfo);
-    }
-
     let registry_auth = transform_auth(registry_auth);
     let token = token_resolver(token_target, &registry_auth)?;
-    if token.trim().is_empty() {
+    if token.is_empty() {
         return Err(DigestError::MissingToken);
     }
 
     let remote_digest = get_digest(digest_url, &token)?;
     debug!(remote = %remote_digest, "Found a remote digest to compare with");
 
+    // Legacy behavior returns `false` when the container has no repo digests,
+    // so an empty slice is not a hard error here.
     for digest in repo_digests {
         let digest = digest.as_ref();
         let local_digest = digest.split('@').nth(1).unwrap();
@@ -655,6 +653,48 @@ mod tests {
         .expect("comparison should succeed");
 
         assert!(matches);
+    }
+
+    #[test]
+    fn compare_digest_returns_false_when_repo_digests_are_empty() {
+        let registry_auth = encode_base64_standard(br#"{"username":"alice","password":"secret"}"#);
+        let expected_basic = encode_base64_standard(b"alice:secret");
+        let request_basic = expected_basic.clone();
+        let server = spawn_test_server(
+            move |request| {
+                assert!(request.contains(&format!("Authorization: Basic {request_basic}")));
+            },
+            |response| {
+                response.push_str("HTTP/1.1 200 OK\r\n");
+                response.push_str("Docker-Content-Digest: sha256:abc123\r\n");
+                response.push_str("Content-Length: 0\r\n\r\n");
+            },
+        );
+
+        struct MockTokenSource {
+            expected_basic: String,
+        }
+
+        impl TokenSource for MockTokenSource {
+            fn get_token(&self, _image_ref: &str, registry_auth: &str) -> Result<String> {
+                assert_eq!(registry_auth, self.expected_basic);
+                Ok(format!("Basic {registry_auth}"))
+            }
+        }
+
+        let repo_digests: Vec<String> = Vec::new();
+
+        let matches = compare_digest_with_url(
+            &repo_digests,
+            &format!("http://{}/v2/library/watchtower/manifests/latest", server.addr),
+            &registry_auth,
+            &MockTokenSource {
+                expected_basic,
+            },
+        )
+        .expect("comparison should succeed");
+
+        assert!(!matches);
     }
 
     #[derive(Debug)]
