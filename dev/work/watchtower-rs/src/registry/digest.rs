@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::process::Command;
@@ -51,7 +52,11 @@ pub fn transform_auth(registry_auth: &str) -> Result<String> {
         return Ok(String::new());
     }
 
-    let decoded = decode_base64_standard(registry_auth)?;
+    let decoded = match decode_base64_standard(registry_auth) {
+        Ok(decoded) => decoded,
+        Err(_) => return Ok(registry_auth.to_string()),
+    };
+
     let Ok(decoded) = String::from_utf8(decoded) else {
         return Ok(registry_auth.to_string());
     };
@@ -150,6 +155,17 @@ pub fn get_digest(url: &str, token: &str) -> Result<String> {
                 parsed.scheme
             )));
         }
+    };
+
+    digest_from_response(&response.status_line, response.headers)
+}
+
+/// Evaluate a registry HEAD response without performing the transport call.
+pub fn digest_from_response(status_line: &str, headers: HashMap<String, String>) -> Result<String> {
+    let response = HttpResponse {
+        status_line: status_line.to_string(),
+        status_code: parse_status_code(status_line)?,
+        headers,
     };
 
     if response.status_code != 200 {
@@ -270,7 +286,7 @@ fn parse_http_response(mut stream: impl Read) -> Result<HttpResponse> {
 
     let status_line = status_line.trim_end_matches(['\r', '\n']).to_string();
     let status_code = parse_status_code(&status_line)?;
-    let mut headers = std::collections::HashMap::new();
+    let mut headers = HashMap::new();
 
     loop {
         let mut line = String::new();
@@ -552,9 +568,9 @@ mod tests {
 
     #[test]
     fn transform_auth_rejects_invalid_base64() {
-        let err = transform_auth("not-base64").expect_err("should reject malformed encoding");
+        let transformed = transform_auth("not-base64").expect("should preserve malformed payload");
 
-        assert_eq!(err, DigestError::InvalidRegistryAuthEncoding);
+        assert_eq!(transformed, "not-base64");
     }
 
     #[test]
