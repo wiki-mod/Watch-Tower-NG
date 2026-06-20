@@ -1,6 +1,8 @@
 use std::time::Duration;
 
+use thiserror::Error;
 use serde_json::{Map, Value, json};
+use url::{Url, form_urlencoded::byte_serialize};
 
 use crate::types::{ContainerReport, Report};
 
@@ -175,6 +177,292 @@ pub fn get_delay(configured_delay: Option<Duration>, legacy_delay: Duration) -> 
             .filter(|delay| *delay > Duration::ZERO)
             .unwrap_or(Duration::ZERO)
     }
+}
+
+/// Default notification color used by providers that support a CSS hex value.
+pub const COLOR_HEX: &str = "#406170";
+
+/// Default notification color used by providers that prefer a numeric value.
+pub const COLOR_INT: u32 = 0x406170;
+
+/// The legacy provider templates bundled with Watchtower.
+pub const COMMON_TEMPLATES: &[(&str, &str)] = &[
+    ("default-legacy", "{{range .}}{{.Message}}{{println}}{{end}}"),
+    (
+        "default",
+        r#"
+{{- if .Report -}}
+  {{- with .Report -}}
+    {{- if ( or .Updated .Failed ) -}}
+{{len .Scanned}} Scanned, {{len .Updated}} Updated, {{len .Failed}} Failed
+      {{- range .Updated}}
+- {{.Name}} ({{.ImageName}}): {{.CurrentImageID.ShortID}} updated to {{.LatestImageID.ShortID}}
+      {{- end -}}
+      {{- range .Fresh}}
+- {{.Name}} ({{.ImageName}}): {{.State}}
+	  {{- end -}}
+	  {{- range .Skipped}}
+- {{.Name}} ({{.ImageName}}): {{.State}}: {{.Error}}
+	  {{- end -}}
+	  {{- range .Failed}}
+- {{.Name}} ({{.ImageName}}): {{.State}}: {{.Error}}
+	  {{- end -}}
+    {{- end -}}
+  {{- end -}}
+{{- else -}}
+  {{range .Entries -}}{{.Message}}{{"\n"}}{{- end -}}
+{{- end -}}
+"#,
+    ),
+    (
+        "porcelain.v1.summary-no-log",
+        r#"
+{{- if .Report -}}
+  {{- range .Report.All }}
+    {{- .Name}} ({{.ImageName}}): {{.State -}}
+    {{- with .Error}} Error: {{.}}{{end}}{{ println }}
+  {{- else -}}
+    no containers matched filter
+  {{- end -}}
+{{- end -}}
+"#,
+    ),
+    ("json.v1", "{{ . | ToJSON }}"),
+];
+
+/// Errors returned while building legacy notification service URLs.
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum NotificationUrlError {
+    /// The supplied URL is structurally invalid for the requested provider.
+    #[error("invalid notification url: {0}")]
+    InvalidUrl(String),
+
+    /// A required field was empty.
+    #[error("missing notification field: {0}")]
+    MissingField(&'static str),
+}
+
+/// Notification settings for the email provider.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EmailSettings<'a> {
+    pub from: &'a str,
+    pub to: &'a str,
+    pub server: &'a str,
+    pub user: &'a str,
+    pub password: &'a str,
+    pub port: u16,
+    pub tls_skip_verify: bool,
+}
+
+/// Notification settings for Slack-compatible hooks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SlackSettings<'a> {
+    pub hook_url: &'a str,
+    pub username: &'a str,
+    pub icon_emoji: &'a str,
+    pub icon_url: &'a str,
+}
+
+/// Notification settings for Microsoft Teams hooks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TeamsSettings<'a> {
+    pub hook_url: &'a str,
+}
+
+/// Notification settings for Gotify.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GotifySettings<'a> {
+    pub api_url: &'a str,
+    pub token: &'a str,
+    pub tls_skip_verify: bool,
+}
+
+/// Return the first colon-delimited segment of a Shoutrrr URL.
+pub fn get_scheme(url: &str) -> &str {
+    match url.find(':') {
+        Some(index) if index > 0 => &url[..index],
+        _ => "invalid",
+    }
+}
+
+/// Resolve a common template by name.
+pub fn common_template(name: &str) -> Option<&'static str> {
+    COMMON_TEMPLATES
+        .iter()
+        .find(|(candidate, _)| *candidate == name)
+        .map(|(_, template)| *template)
+}
+
+/// Return the built-in template selected by the `legacy` flag.
+pub fn default_template(legacy: bool) -> &'static str {
+    if legacy {
+        common_template("default-legacy").expect("default-legacy template exists")
+    } else {
+        common_template("default").expect("default template exists")
+    }
+}
+
+/// Build a legacy email notification URL.
+pub fn build_email_url(settings: &EmailSettings<'_>) -> Result<String, NotificationUrlError> {
+    if settings.from.is_empty() {
+        return Err(NotificationUrlError::MissingField("from"));
+    }
+    if settings.to.is_empty() {
+        return Err(NotificationUrlError::MissingField("to"));
+    }
+    if settings.server.is_empty() {
+        return Err(NotificationUrlError::MissingField("server"));
+    }
+
+    let auth = if settings.user.is_empty() { "None" } else { "Plain" };
+    let mut url = String::from("smtp://");
+
+    if !settings.user.is_empty() {
+        url.push_str(&encode_component(settings.user));
+        url.push(':');
+        url.push_str(&encode_component(settings.password));
+        url.push('@');
+    }
+
+    url.push_str(settings.server);
+    url.push(':');
+    url.push_str(&settings.port.to_string());
+    url.push_str("/?auth=");
+    url.push_str(auth);
+    url.push_str("&fromaddress=");
+    url.push_str(&encode_component(settings.from));
+    url.push_str("&fromname=Watchtower&subject=&toaddresses=");
+    url.push_str(&encode_component(settings.to));
+
+    Ok(url)
+}
+
+/// Build a legacy Slack or Discord notification URL.
+pub fn build_slack_url(settings: &SlackSettings<'_>) -> Result<String, NotificationUrlError> {
+    let trimmed = settings.hook_url.trim_end_matches('/');
+    let stripped = trimmed
+        .strip_prefix("https://")
+        .unwrap_or(trimmed);
+    let parts: Vec<&str> = stripped.split('/').collect();
+
+    match parts.first().copied() {
+        Some("discord.com") | Some("discordapp.com") => build_discord_url(&parts, settings),
+        Some("hooks.slack.com") => build_slack_webhook_url(settings),
+        _ => Err(NotificationUrlError::InvalidUrl(
+            settings.hook_url.to_string(),
+        )),
+    }
+}
+
+/// Build a legacy Microsoft Teams notification URL.
+pub fn build_teams_url(settings: &TeamsSettings<'_>) -> Result<String, NotificationUrlError> {
+    let parsed = Url::parse(settings.hook_url)
+        .map_err(|err| NotificationUrlError::InvalidUrl(err.to_string()))?;
+    let segments: Vec<_> = parsed
+        .path_segments()
+        .ok_or_else(|| NotificationUrlError::InvalidUrl(settings.hook_url.to_string()))?
+        .collect();
+
+    if segments.len() != 5
+        || segments[0] != "webhook"
+        || segments[2] != "IncomingWebhook"
+    {
+        return Err(NotificationUrlError::InvalidUrl(
+            settings.hook_url.to_string(),
+        ));
+    }
+
+    Ok(format!(
+        "teams://{}/{}/{}?color={}",
+        segments[1],
+        segments[3],
+        segments[4],
+        encode_component(COLOR_HEX)
+    ))
+}
+
+/// Build a legacy Gotify notification URL.
+pub fn build_gotify_url(settings: &GotifySettings<'_>) -> Result<String, NotificationUrlError> {
+    let parsed = Url::parse(settings.api_url)
+        .map_err(|err| NotificationUrlError::InvalidUrl(err.to_string()))?;
+    match parsed.scheme() {
+        "http" | "https" => {}
+        _ => {
+            return Err(NotificationUrlError::InvalidUrl(
+                settings.api_url.to_string(),
+            ))
+        }
+    }
+
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| NotificationUrlError::InvalidUrl(settings.api_url.to_string()))?;
+    let path = parsed.path().trim_end_matches('/');
+
+    let mut url = String::from("gotify://");
+    url.push_str(host);
+    if !path.is_empty() {
+        url.push_str(path);
+    }
+    url.push('/');
+    url.push_str(settings.token);
+    url.push_str("?title=");
+
+    Ok(url)
+}
+
+fn build_discord_url(
+    parts: &[&str],
+    settings: &SlackSettings<'_>,
+) -> Result<String, NotificationUrlError> {
+    if parts.len() < 5 {
+        return Err(NotificationUrlError::InvalidUrl(
+            settings.hook_url.to_string(),
+        ));
+    }
+
+    let channel = parts[parts.len() - 3];
+    let token = parts[parts.len() - 2];
+    let mut query = String::new();
+    if !settings.icon_url.is_empty() {
+        query.push_str("avatar=");
+        query.push_str(&encode_component(settings.icon_url));
+        query.push('&');
+    }
+    query.push_str("color=0x");
+    query.push_str(&format!("{:x}", COLOR_INT));
+    query.push_str("&colordebug=0x0&colorerror=0x0&colorinfo=0x0&colorwarn=0x0&username=");
+    query.push_str(&encode_component(settings.username));
+
+    Ok(format!("discord://{}@{}?{}", token, channel, query))
+}
+
+fn build_slack_webhook_url(settings: &SlackSettings<'_>) -> Result<String, NotificationUrlError> {
+    let webhook_token = settings
+        .hook_url
+        .strip_prefix("https://hooks.slack.com/services/")
+        .ok_or_else(|| NotificationUrlError::InvalidUrl(settings.hook_url.to_string()))?;
+
+    let mut url = String::from("slack://hook:");
+    url.push_str(webhook_token);
+    url.push_str("@webhook?botname=");
+    url.push_str(&encode_component(settings.username));
+    url.push_str("&color=");
+    url.push_str(&encode_component(COLOR_HEX));
+
+    if !settings.icon_url.is_empty() {
+        url.push_str("&icon=");
+        url.push_str(&encode_component(settings.icon_url));
+    } else if !settings.icon_emoji.is_empty() {
+        url.push_str("&icon=");
+        url.push_str(settings.icon_emoji);
+    }
+
+    Ok(url)
+}
+
+fn encode_component(value: &str) -> String {
+    byte_serialize(value.as_bytes()).collect()
 }
 
 fn report_to_json_value(report: &Report) -> Value {
@@ -570,6 +858,91 @@ mod tests {
                 "report": Value::Null,
                 "title": "Watchtower updates"
             })
+        );
+    }
+
+    #[test]
+    fn common_templates_cover_the_legacy_names() {
+        assert_eq!(common_template("default-legacy"), Some("{{range .}}{{.Message}}{{println}}{{end}}"));
+        assert_eq!(default_template(true), "{{range .}}{{.Message}}{{println}}{{end}}");
+        assert!(common_template("missing").is_none());
+    }
+
+    #[test]
+    fn build_discord_slack_url_matches_legacy_format() {
+        let settings = SlackSettings {
+            hook_url: "https://discord.com/api/webhooks/123456789/abcdef/slack",
+            username: "containrrrbot",
+            icon_emoji: "",
+            icon_url: "https://containrrr.dev/watchtower-sq180.png",
+        };
+
+        let url = build_slack_url(&settings).expect("discord url should build");
+
+        assert_eq!(
+            url,
+            "discord://abcdef@123456789?avatar=https%3A%2F%2Fcontainrrr.dev%2Fwatchtower-sq180.png&color=0x406170&colordebug=0x0&colorerror=0x0&colorinfo=0x0&colorwarn=0x0&username=containrrrbot"
+        );
+    }
+
+    #[test]
+    fn build_slack_webhook_url_matches_legacy_format() {
+        let settings = SlackSettings {
+            hook_url: "https://hooks.slack.com/services/AAA/BBB/CCC",
+            username: "containrrrbot",
+            icon_emoji: "whale",
+            icon_url: "",
+        };
+
+        let url = build_slack_url(&settings).expect("slack url should build");
+
+        assert_eq!(
+            url,
+            "slack://hook:AAA/BBB/CCC@webhook?botname=containrrrbot&color=%23406170&icon=whale"
+        );
+    }
+
+    #[test]
+    fn build_gotify_url_matches_legacy_format() {
+        let settings = GotifySettings {
+            api_url: "https://shoutrrr.local",
+            token: "aaa",
+            tls_skip_verify: false,
+        };
+
+        let url = build_gotify_url(&settings).expect("gotify url should build");
+
+        assert_eq!(url, "gotify://shoutrrr.local/aaa?title=");
+    }
+
+    #[test]
+    fn build_teams_url_matches_legacy_format() {
+        let settings = TeamsSettings {
+            hook_url: "https://outlook.office.com/webhook/aaa/IncomingWebhook/bbb/ccc",
+        };
+
+        let url = build_teams_url(&settings).expect("teams url should build");
+
+        assert_eq!(url, "teams://aaa/bbb/ccc?color=%23406170");
+    }
+
+    #[test]
+    fn build_email_url_matches_legacy_format() {
+        let settings = EmailSettings {
+            from: "lala@example.com",
+            to: "mail@example.com",
+            server: "mail.containrrr.dev",
+            user: "containrrrbot",
+            password: "secret-password",
+            port: 25,
+            tls_skip_verify: false,
+        };
+
+        let url = build_email_url(&settings).expect("email url should build");
+
+        assert_eq!(
+            url,
+            "smtp://containrrrbot:secret-password@mail.containrrr.dev:25/?auth=Plain&fromaddress=lala%40example.com&fromname=Watchtower&subject=&toaddresses=mail%40example.com"
         );
     }
 
