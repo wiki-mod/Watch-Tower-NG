@@ -16,6 +16,7 @@ pub mod api_metrics;
 pub mod api_update;
 pub mod cgroup;
 pub mod container;
+pub mod docker_client;
 pub mod lifecycle;
 pub mod metrics;
 pub mod notifications;
