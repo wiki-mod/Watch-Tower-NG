@@ -7,6 +7,9 @@
 //! model.
 
 use std::fmt;
+use std::fs;
+use std::io;
+use std::path::Path;
 use std::time::Duration;
 
 use clap::{Parser, ValueEnum};
@@ -69,7 +72,9 @@ impl WatchtowerCli {
     /// Parse the process arguments and resolve environment-backed defaults.
     pub fn try_parse_resolved() -> Result<WatchtowerConfig, WatchtowerCliError> {
         let cli = Self::try_parse()?;
-        Ok(cli.try_into()?)
+        let mut config: WatchtowerConfig = cli.try_into()?;
+        config.resolve_secret_references()?;
+        Ok(config)
     }
 }
 
@@ -857,6 +862,10 @@ pub enum WatchtowerCliError {
     /// The parsed values were not a valid runtime configuration.
     #[error(transparent)]
     Resolve(#[from] CliError),
+
+    /// A configured secret file could not be read.
+    #[error(transparent)]
+    Io(#[from] io::Error),
 }
 
 impl TryFrom<WatchtowerCli> for WatchtowerConfig {
@@ -949,6 +958,23 @@ impl From<LoggingArgs> for LoggingConfig {
             no_color: args.no_color,
             no_startup_message: args.no_startup_message,
         }
+    }
+}
+
+impl WatchtowerConfig {
+    /// Resolve file-backed secrets in the finalized configuration.
+    pub fn resolve_secret_references(&mut self) -> io::Result<()> {
+        self.http_api.token = expand_optional_secret(self.http_api.token.take())?;
+        self.notifications.urls = expand_secret_list(self.notifications.urls.clone())?;
+        self.notifications.email.password =
+            expand_optional_secret(self.notifications.email.password.take())?;
+        self.notifications.slack.hook_url =
+            expand_optional_secret(self.notifications.slack.hook_url.take())?;
+        self.notifications.msteams.hook = expand_optional_secret(self.notifications.msteams.hook.take())?;
+        self.notifications.gotify.url = expand_optional_secret(self.notifications.gotify.url.take())?;
+        self.notifications.gotify.token =
+            expand_optional_secret(self.notifications.gotify.token.take())?;
+        Ok(())
     }
 }
 
@@ -1146,9 +1172,57 @@ fn parse_disable_container_values(input: &str) -> Result<DisableContainerValues,
     Ok(DisableContainerValues { values })
 }
 
+fn expand_optional_secret(value: Option<String>) -> io::Result<Option<String>> {
+    match value {
+        Some(value) => Ok(Some(expand_secret_value(&value)?)),
+        None => Ok(None),
+    }
+}
+
+fn expand_secret_list(values: Vec<String>) -> io::Result<Vec<String>> {
+    let mut expanded = Vec::new();
+
+    for value in values {
+        if is_file_reference(&value) {
+            let content = fs::read_to_string(&value)?;
+            expanded.extend(
+                content
+                    .lines()
+                    .map(str::trim)
+                    .filter(|line| !line.is_empty())
+                    .map(str::to_owned),
+            );
+        } else {
+            expanded.push(value);
+        }
+    }
+
+    Ok(expanded)
+}
+
+fn expand_secret_value(value: &str) -> io::Result<String> {
+    if is_file_reference(value) {
+        let content = fs::read_to_string(value)?;
+        Ok(content.trim().to_string())
+    } else {
+        Ok(value.to_string())
+    }
+}
+
+fn is_file_reference(value: &str) -> bool {
+    let colon = value.find(':');
+    if matches!(colon, Some(index) if index != 1) {
+        return false;
+    }
+
+    Path::new(value).exists()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn parses_disable_containers_from_mixed_separators() {
@@ -1211,6 +1285,85 @@ mod tests {
     }
 
     #[test]
+    fn resolves_secret_file_references_for_http_and_notifications() {
+        let http_token = write_temp_file("http-token", "secret-token\n");
+        let slack_hook = write_temp_file("slack-hook", "https://hooks.slack.com/services/AAA/BBB/CCC\n");
+        let msteams_hook = write_temp_file("msteams-hook", "https://outlook.office.com/webhook/aaa/IncomingWebhook/bbb/ccc\n");
+        let gotify_url = write_temp_file("gotify-url", "https://gotify.local/\n");
+        let gotify_token = write_temp_file("gotify-token", "gotify-secret\n");
+        let notification_urls = write_temp_file("notification-urls", "https://example.test/first\n\nhttps://example.test/second\n");
+        let email_password = write_temp_file("email-password", "mail-secret\n");
+
+        let cli = WatchtowerCli {
+            docker: DockerArgs::default(),
+            scheduling: SchedulingArgs::default(),
+            update: UpdateArgs::default(),
+            selection: SelectionArgs::default(),
+            http_api: HttpApiArgs {
+                token: Some(http_token.to_string_lossy().into_owned()),
+                ..HttpApiArgs::default()
+            },
+            notifications: NotificationArgs {
+                urls: vec![NotificationUrlValues {
+                    values: vec![notification_urls.to_string_lossy().into_owned()],
+                }],
+                email: EmailNotificationArgs {
+                    password: Some(email_password.to_string_lossy().into_owned()),
+                    ..EmailNotificationArgs::default()
+                },
+                slack: SlackNotificationArgs {
+                    hook_url: Some(slack_hook.to_string_lossy().into_owned()),
+                    ..SlackNotificationArgs::default()
+                },
+                msteams: TeamsNotificationArgs {
+                    hook: Some(msteams_hook.to_string_lossy().into_owned()),
+                    ..TeamsNotificationArgs::default()
+                },
+                gotify: GotifyNotificationArgs {
+                    url: Some(gotify_url.to_string_lossy().into_owned()),
+                    token: Some(gotify_token.to_string_lossy().into_owned()),
+                    ..GotifyNotificationArgs::default()
+                },
+                ..NotificationArgs::default()
+            },
+            logging: LoggingArgs::default(),
+            containers: Vec::new(),
+        };
+
+        let mut config: WatchtowerConfig = cli.try_into().expect("config resolves");
+        config.resolve_secret_references().expect("secrets resolve");
+
+        assert_eq!(config.http_api.token.as_deref(), Some("secret-token"));
+        assert_eq!(
+            config.notifications.urls,
+            vec![
+                "https://example.test/first".to_string(),
+                "https://example.test/second".to_string(),
+            ]
+        );
+        assert_eq!(
+            config.notifications.email.password.as_deref(),
+            Some("mail-secret")
+        );
+        assert_eq!(
+            config.notifications.slack.hook_url.as_deref(),
+            Some("https://hooks.slack.com/services/AAA/BBB/CCC")
+        );
+        assert_eq!(
+            config.notifications.msteams.hook.as_deref(),
+            Some("https://outlook.office.com/webhook/aaa/IncomingWebhook/bbb/ccc")
+        );
+        assert_eq!(
+            config.notifications.gotify.url.as_deref(),
+            Some("https://gotify.local/")
+        );
+        assert_eq!(
+            config.notifications.gotify.token.as_deref(),
+            Some("gotify-secret")
+        );
+    }
+
+    #[test]
     fn porcelain_mode_enables_logger_output_and_report_template() {
         let cli = WatchtowerCli {
             docker: DockerArgs::default(),
@@ -1241,6 +1394,17 @@ mod tests {
                 .iter()
                 .any(|url| url == "logger://")
         );
+    }
+
+    fn write_temp_file(name: &str, content: &str) -> std::path::PathBuf {
+        let mut path = std::env::temp_dir();
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be after unix epoch")
+            .as_nanos();
+        path.push(format!("watchtower-rs-{name}-{}-{stamp}.txt", std::process::id()));
+        fs::write(&path, content).expect("temp file should be written");
+        path
     }
 }
 
