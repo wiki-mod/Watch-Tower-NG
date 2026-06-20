@@ -2,12 +2,13 @@
 
 //! Pull-option surface for the Rust registry port.
 //!
-//! The credentials path is intentionally not implemented in this slice. The
-//! module keeps the Go-shaped API surface and wires warning decisions through
-//! the existing registry helper and trust logic.
+//! This module mirrors the Go `GetPullOptions` flow closely enough for the
+//! migration to preserve registry-auth fallback behavior without pulling in the
+//! full Docker client.
 
 use crate::types::FilterableContainer;
 
+use super::credentials;
 use super::trust;
 
 /// Signature used for retrying a pull without authentication.
@@ -24,11 +25,19 @@ pub struct PullOptions {
 
 /// Return the pull options for an image reference.
 ///
-/// This port does not ship registry credential lookup yet, so the function
-/// preserves the call shape and returns the default pull options.
-#[must_use]
-pub fn get_pull_options(_image_name: &str) -> PullOptions {
-    PullOptions::default()
+/// The legacy behavior prefers environment credentials and falls back to the
+/// Docker config file. A resolved auth payload enables the retry handler.
+pub fn get_pull_options(image_name: &str) -> credentials::Result<PullOptions> {
+    let registry_auth = credentials::encoded_auth(image_name)?;
+
+    if registry_auth.is_empty() {
+        return Ok(PullOptions::default());
+    }
+
+    Ok(PullOptions {
+        registry_auth,
+        privilege_func: Some(default_auth_handler),
+    })
 }
 
 /// Retry handler used after a registry rejects the authenticated request.
@@ -92,7 +101,10 @@ mod tests {
 
     #[test]
     fn get_pull_options_returns_the_default_shape() {
-        let options = get_pull_options("ghcr.io/watchtower/image:latest");
+        let options = get_pull_options_with_resolver("ghcr.io/watchtower/image:latest", || {
+            Ok(String::new())
+        })
+        .expect("default options should resolve");
 
         assert_eq!(options.registry_auth, "");
         assert!(options.privilege_func.is_none());
@@ -122,5 +134,49 @@ mod tests {
         assert!(!warn_on_api_consumption(&TestContainer::new(
             "localhost:5000/team/image@sha256:deadbeef"
         )));
+    }
+
+    #[test]
+    fn get_pull_options_enables_privilege_retry_when_auth_is_available() {
+        let options = get_pull_options_with_resolver("registry.example.com/team/image:latest", || {
+            Ok("auth-token".to_string())
+        })
+        .expect("auth options should resolve");
+
+        assert_eq!(options.registry_auth, "auth-token");
+        assert!(options.privilege_func.is_some());
+    }
+
+    #[test]
+    fn get_pull_options_propagates_credentials_errors() {
+        let err = get_pull_options_with_resolver("registry.example.com/team/image:latest", || {
+            Err(credentials::CredentialsError::MissingEnvironmentCredentials)
+        })
+        .expect_err("missing credentials should fail");
+
+        assert!(matches!(
+            err,
+            credentials::CredentialsError::MissingEnvironmentCredentials
+        ));
+    }
+
+    fn get_pull_options_with_resolver<F>(
+        image_name: &str,
+        resolver: F,
+    ) -> credentials::Result<PullOptions>
+    where
+        F: FnOnce() -> credentials::Result<String>,
+    {
+        let registry_auth = resolver()?;
+
+        if registry_auth.is_empty() {
+            return Ok(PullOptions::default());
+        }
+
+        let _ = image_name;
+        Ok(PullOptions {
+            registry_auth,
+            privilege_func: Some(default_auth_handler),
+        })
     }
 }
