@@ -67,6 +67,7 @@ where
                 }
             }
 
+            std::thread::sleep(Duration::from_secs(1));
             continue;
         }
 
