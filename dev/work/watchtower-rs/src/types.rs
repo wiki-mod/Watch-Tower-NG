@@ -208,20 +208,43 @@ pub struct Report {
 }
 
 impl Report {
-    /// Iterate over every recorded container entry.
-    pub fn all(&self) -> impl Iterator<Item = &ContainerReport> {
-        self.scanned
-            .iter()
-            .chain(self.updated.iter())
-            .chain(self.failed.iter())
-            .chain(self.skipped.iter())
-            .chain(self.stale.iter())
-            .chain(self.fresh.iter())
+    /// Return every recorded container entry once, in deterministic ID order.
+    ///
+    /// The legacy Go report deduplicated by container ID with the priority order
+    /// `updated`, `failed`, `skipped`, `stale`, `fresh`, `scanned`.
+    pub fn all(&self) -> Vec<&ContainerReport> {
+        let mut all = Vec::with_capacity(
+            self.scanned.len()
+                + self.updated.len()
+                + self.failed.len()
+                + self.skipped.len()
+                + self.stale.len()
+                + self.fresh.len(),
+        );
+        let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+
+        for bucket in [
+            &self.updated,
+            &self.failed,
+            &self.skipped,
+            &self.stale,
+            &self.fresh,
+            &self.scanned,
+        ] {
+            for report in bucket {
+                if seen.insert(report.id.as_str()) {
+                    all.push(report);
+                }
+            }
+        }
+
+        all.sort_by(|left, right| left.id.as_str().cmp(right.id.as_str()));
+        all
     }
 
     /// Return true when the report has no recorded entries.
     pub fn is_empty(&self) -> bool {
-        self.all().next().is_none()
+        self.all().is_empty()
     }
 }
 
@@ -366,5 +389,36 @@ mod tests {
         container.set_linked_to_restarting(true);
         assert!(container.is_linked_to_restarting());
         assert!(container.to_restart());
+    }
+
+    #[test]
+    fn report_all_deduplicates_by_priority_and_sorts_by_id() {
+        let make = |id: &str, state: &str| ContainerReport {
+            id: ContainerID::from(id),
+            name: format!("name-{id}"),
+            current_image_id: ImageID::from(format!("old-{id}")),
+            latest_image_id: ImageID::from(format!("new-{id}")),
+            image_name: format!("image-{id}"),
+            error: None,
+            state: state.to_string(),
+        };
+
+        let report = Report {
+            scanned: vec![make("c", "Scanned"), make("a", "Scanned")],
+            updated: vec![make("b", "Updated"), make("a", "Updated")],
+            failed: vec![make("d", "Failed")],
+            skipped: vec![make("e", "Skipped")],
+            stale: vec![make("f", "Stale")],
+            fresh: vec![make("g", "Fresh")],
+        };
+
+        let ids = report
+            .all()
+            .into_iter()
+            .map(|entry| entry.id.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(ids, vec!["a", "b", "c", "d", "e", "f", "g"]);
+        assert!(!report.is_empty());
     }
 }
