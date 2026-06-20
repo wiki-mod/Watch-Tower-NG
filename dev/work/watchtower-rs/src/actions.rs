@@ -6,9 +6,25 @@
 //! container-ordering and restart decisions that can be derived from in-memory
 //! state.
 
+use crate::sorter::{sort_by_dependencies, SortableContainer};
 use crate::types::{ContainerID, RuntimeContainer, UpdateParams};
 use crate::types::ImageID;
 use std::collections::HashSet;
+
+/// Update orchestration derived from the legacy Go action flow.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UpdatePlan {
+    /// Container IDs in dependency order.
+    pub sorted_container_ids: Vec<ContainerID>,
+    /// Container IDs selected for update.
+    pub update_container_ids: Vec<ContainerID>,
+    /// Container IDs that would be stopped first, in reverse dependency order.
+    pub stop_order: Vec<ContainerID>,
+    /// Container IDs that would be restarted after stopping, in dependency order.
+    pub restart_order: Vec<ContainerID>,
+    /// Cleanup candidates after duplicate and in-use filtering.
+    pub cleanup_image_ids: Vec<ImageID>,
+}
 
 /// Fail when rolling restarts are requested on dependency-linked containers.
 pub fn check_for_sanity<C: RuntimeContainer>(containers: &[C], rolling_restarts: bool) -> Result<(), String> {
@@ -66,6 +82,47 @@ pub fn select_containers_to_update<C: RuntimeContainer>(
     selected
 }
 
+/// Build the container update plan from the current runtime snapshot.
+///
+/// This mirrors the Go update flow at a planning level: sort by dependencies,
+/// mark implicit restarts, pick update candidates, and derive cleanup images.
+pub fn build_update_plan<C>(
+    containers: &[C],
+    params: &UpdateParams,
+) -> Result<UpdatePlan, String>
+where
+    C: RuntimeContainer + SortableContainer + Clone,
+{
+    check_for_sanity(containers, params.rolling_restart)?;
+
+    let mut ordered = sort_by_dependencies(containers)?;
+    update_implicit_restart(&mut ordered);
+
+    let sorted_container_ids = ordered.iter().map(|container| container.id().clone()).collect();
+    let update_container_ids = select_containers_to_update(&mut ordered, params);
+    let stop_order = update_container_ids.iter().cloned().rev().collect();
+    let restart_order = update_container_ids.clone();
+
+    let cleanup_image_ids = if params.cleanup {
+        let stale_image_ids = ordered
+            .iter()
+            .filter(|container| container.is_stale())
+            .map(|container| container.image_id().clone());
+
+        retain_unused_cleanup_image_ids(&ordered, stale_image_ids)
+    } else {
+        Vec::new()
+    };
+
+    Ok(UpdatePlan {
+        sorted_container_ids,
+        update_container_ids,
+        stop_order,
+        restart_order,
+        cleanup_image_ids,
+    })
+}
+
 /// Normalize cleanup image IDs before removal.
 ///
 /// The legacy Go cleanup path used a set-like map, which naturally skipped
@@ -98,6 +155,7 @@ pub fn retain_unused_cleanup_image_ids<C: RuntimeContainer>(
 ) -> Vec<ImageID> {
     let in_use: HashSet<String> = containers
         .iter()
+        .filter(|container| !container.is_stale())
         .map(|container| container.image_id().as_str().to_string())
         .collect();
 
@@ -161,6 +219,16 @@ mod tests {
 
         fn is_monitor_only(&self, params: &UpdateParams) -> bool {
             self.monitor_only || params.monitor_only
+        }
+    }
+
+    impl SortableContainer for MockContainer {
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        fn links(&self) -> &[String] {
+            &self.links
         }
     }
 
@@ -251,5 +319,70 @@ mod tests {
             retain_unused_cleanup_image_ids(&containers, candidate_ids),
             vec![ImageID::from("sha256:stale-old")]
         );
+    }
+
+    #[test]
+    fn build_update_plan_sorts_updates_and_filters_cleanup_candidates() {
+        let mut containers = vec![
+            container("a", "/alpha", &["/beta"], "sha256:old-alpha"),
+            container("b", "/beta", &[], "sha256:shared"),
+            container("c", "/gamma", &[], "sha256:stale-gamma"),
+        ];
+
+        containers[0].stale = true;
+        containers[2].stale = true;
+
+        let params = UpdateParams {
+            cleanup: true,
+            ..UpdateParams::default()
+        };
+
+        let plan = build_update_plan(&containers, &params).expect("plan should build");
+
+        assert_eq!(
+            plan.sorted_container_ids,
+            vec![
+                ContainerID::from("b"),
+                ContainerID::from("a"),
+                ContainerID::from("c"),
+            ]
+        );
+        assert_eq!(
+            plan.update_container_ids,
+            vec![
+                ContainerID::from("b"),
+                ContainerID::from("a"),
+                ContainerID::from("c"),
+            ]
+        );
+        assert_eq!(
+            plan.stop_order,
+            vec![
+                ContainerID::from("c"),
+                ContainerID::from("a"),
+                ContainerID::from("b"),
+            ]
+        );
+        assert_eq!(plan.restart_order, plan.update_container_ids);
+        assert_eq!(
+            plan.cleanup_image_ids,
+            vec![
+                ImageID::from("sha256:old-alpha"),
+                ImageID::from("sha256:stale-gamma"),
+            ]
+        );
+    }
+
+    #[test]
+    fn build_update_plan_rejects_rolling_restarts_for_linked_containers() {
+        let containers = vec![container("a", "/alpha", &["/beta"], "sha256:a")];
+        let params = UpdateParams {
+            rolling_restart: true,
+            ..UpdateParams::default()
+        };
+
+        let err = build_update_plan(&containers, &params).expect_err("should reject");
+
+        assert!(err.contains("rolling restarts"));
     }
 }
