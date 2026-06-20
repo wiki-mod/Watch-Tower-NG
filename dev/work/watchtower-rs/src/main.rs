@@ -44,6 +44,8 @@ impl From<WatchtowerConfig> for AppConfig {
             update,
             selection,
             http_api,
+            notifications,
+            logging,
             health_check,
             ..
         } = config;
@@ -65,11 +67,14 @@ impl From<WatchtowerConfig> for AppConfig {
             schedule,
             interval,
             http_api_token: http_api.token,
+            notification_types: notifications.types,
             enable_http_update_api: http_api.update,
             enable_http_metrics_api: http_api.metrics,
             unblock_http_api: scheduling.periodic_polls,
             scope: selection.scope,
             health_check,
+            no_startup_message: logging.no_startup_message,
+            trace_enabled: logging.trace,
         }
     }
 }

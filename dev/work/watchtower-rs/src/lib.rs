@@ -19,6 +19,7 @@ pub mod container;
 pub mod lifecycle;
 pub mod metrics;
 pub mod notifications;
+pub mod startup;
 pub mod sorter;
 pub mod session;
 pub mod registry;
@@ -72,6 +73,8 @@ pub struct AppConfig {
     pub interval: Option<Duration>,
     /// Token for the HTTP API, when enabled.
     pub http_api_token: Option<String>,
+    /// Notification transport names used by startup reporting.
+    pub notification_types: Vec<String>,
     /// Enable the HTTP update endpoint.
     pub enable_http_update_api: bool,
     /// Enable the HTTP metrics endpoint.
@@ -82,6 +85,10 @@ pub struct AppConfig {
     pub scope: Option<String>,
     /// Skip the standard health check path and exit immediately.
     pub health_check: bool,
+    /// Prevent the startup message from being emitted.
+    pub no_startup_message: bool,
+    /// Whether trace logging is enabled.
+    pub trace_enabled: bool,
 }
 
 impl AppConfig {
@@ -188,6 +195,7 @@ impl WatchtowerApp {
     /// validates the configuration and exits cleanly.
     pub fn run(&self) -> Result<()> {
         self.config.validate()?;
+        crate::startup::emit_startup_messages(&self.config);
         Ok(())
     }
 }
