@@ -106,6 +106,26 @@ pub trait FilterableContainer {
     fn image_name(&self) -> &str;
 }
 
+/// Minimal runtime container surface used by pure action logic.
+///
+/// The trait mirrors the restart-oriented container state that Watchtower's
+/// action layer needs without pulling in Docker-specific types.
+pub trait RuntimeContainer {
+    fn id(&self) -> &ContainerID;
+    fn name(&self) -> &str;
+    fn links(&self) -> &[String];
+    fn is_watchtower(&self) -> bool;
+    fn is_stale(&self) -> bool;
+    fn set_stale(&mut self, value: bool);
+    fn is_linked_to_restarting(&self) -> bool;
+    fn set_linked_to_restarting(&mut self, value: bool);
+    fn is_monitor_only(&self, params: &UpdateParams) -> bool;
+
+    fn to_restart(&self) -> bool {
+        self.is_stale() || self.is_linked_to_restarting()
+    }
+}
+
 /// Parameters that control an update pass.
 #[derive(Clone, Default)]
 pub struct UpdateParams {
@@ -215,8 +235,13 @@ mod tests {
     use super::*;
 
     struct MockContainer {
+        id: ContainerID,
         name: String,
+        links: Vec<String>,
         watchtower: bool,
+        stale: bool,
+        linked_to_restarting: bool,
+        monitor_only: bool,
         enabled: (bool, bool),
         scope: Option<String>,
         image_name: String,
@@ -244,6 +269,44 @@ mod tests {
         }
     }
 
+    impl RuntimeContainer for MockContainer {
+        fn id(&self) -> &ContainerID {
+            &self.id
+        }
+
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        fn links(&self) -> &[String] {
+            &self.links
+        }
+
+        fn is_watchtower(&self) -> bool {
+            self.watchtower
+        }
+
+        fn is_stale(&self) -> bool {
+            self.stale
+        }
+
+        fn set_stale(&mut self, value: bool) {
+            self.stale = value;
+        }
+
+        fn is_linked_to_restarting(&self) -> bool {
+            self.linked_to_restarting
+        }
+
+        fn set_linked_to_restarting(&mut self, value: bool) {
+            self.linked_to_restarting = value;
+        }
+
+        fn is_monitor_only(&self, params: &UpdateParams) -> bool {
+            self.monitor_only || params.monitor_only
+        }
+    }
+
     #[test]
     fn short_id_trims_prefix_and_length() {
         let id = ContainerID::from("sha256:1234567890abcdef");
@@ -258,8 +321,13 @@ mod tests {
             container.name() == "watchtower" && !container.is_watchtower()
         });
         let container = MockContainer {
+            id: ContainerID::from("abc123"),
             name: "watchtower".to_string(),
+            links: vec![],
             watchtower: false,
+            stale: false,
+            linked_to_restarting: false,
+            monitor_only: false,
             enabled: (true, true),
             scope: Some("default".to_string()),
             image_name: "containrrr/watchtower:latest".to_string(),
@@ -269,5 +337,34 @@ mod tests {
         assert_eq!(container.enabled(), (true, true));
         assert_eq!(container.scope(), Some("default"));
         assert_eq!(container.image_name(), "containrrr/watchtower:latest");
+    }
+
+    #[test]
+    fn runtime_container_exposes_restart_state() {
+        let mut container = MockContainer {
+            id: ContainerID::from("abc123"),
+            name: "app".to_string(),
+            links: vec!["/db".to_string()],
+            watchtower: false,
+            stale: false,
+            linked_to_restarting: false,
+            monitor_only: false,
+            enabled: (false, false),
+            scope: None,
+            image_name: "example/app:latest".to_string(),
+        };
+
+        assert_eq!(container.id().as_str(), "abc123");
+        assert_eq!(container.links().first().map(String::as_str), Some("/db"));
+        assert!(!container.to_restart());
+
+        container.set_stale(true);
+        assert!(container.is_stale());
+        assert!(container.to_restart());
+
+        container.set_stale(false);
+        container.set_linked_to_restarting(true);
+        assert!(container.is_linked_to_restarting());
+        assert!(container.to_restart());
     }
 }

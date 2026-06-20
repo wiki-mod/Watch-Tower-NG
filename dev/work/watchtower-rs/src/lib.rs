@@ -10,6 +10,7 @@ use std::fmt;
 use std::time::Duration;
 
 pub mod filters;
+pub mod actions;
 pub mod session;
 pub mod types;
 
