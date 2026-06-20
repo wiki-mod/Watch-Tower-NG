@@ -41,6 +41,7 @@ Verification policy:
 
 Tooling policy:
 - `sccache` is mandatory for build and test execution in this workspace.
+- Verwendung ist Pflicht.
 - Redis endpoint: `192.168.1.230`
 - sccache-dist endpoint: `192.168.1.220`
 - Running builds or tests without `sccache`, or with only one of the two endpoints configured, is not allowed.

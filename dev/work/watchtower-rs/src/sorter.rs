@@ -1,16 +1,20 @@
 #![forbid(unsafe_code)]
 
-//! Dependency sorting helpers translated from the legacy Go sorter package.
+//! Sorting helpers translated from the legacy Go sorter package.
 //!
-//! The current Rust container snapshot does not expose a container `Created`
-//! timestamp, so Go's `ByCreated` parity is intentionally not implemented here.
-//! This module only covers the dependency-aware topological sort that can be
-//! derived from container names and resolved links.
+//! This module provides both dependency-aware topological sorting and the
+//! creation-time ordering used to detect and clean up duplicate watchtower
+//! instances.
 
+use std::cmp::Ordering;
 use std::collections::BTreeSet;
 
 #[cfg(not(test))]
 use crate::types::RuntimeContainer;
+#[cfg(test)]
+use crate::types::RuntimeContainer;
+use time::format_description::well_known::Rfc3339;
+use time::OffsetDateTime;
 
 /// Minimal container surface required for dependency sorting.
 pub trait SortableContainer {
@@ -43,6 +47,36 @@ where
     C: SortableContainer + Clone,
 {
     DependencySorter::new(containers).sort()
+}
+
+/// Sort containers by their creation timestamp, oldest first.
+///
+/// Invalid or missing timestamps are treated as the newest entries so they do
+/// not displace the known-good ordering.
+pub fn sort_by_created_at<C>(containers: &[C]) -> Vec<C>
+where
+    C: RuntimeContainer + Clone,
+{
+    let mut ordered = containers.to_vec();
+    ordered.sort_by(|left, right| compare_created_at(left.created_at(), right.created_at()));
+    ordered
+}
+
+fn parse_created_at(created_at: &str) -> Option<OffsetDateTime> {
+    if created_at.is_empty() {
+        return None;
+    }
+
+    OffsetDateTime::parse(created_at, &Rfc3339).ok()
+}
+
+fn compare_created_at(left: &str, right: &str) -> Ordering {
+    match (parse_created_at(left), parse_created_at(right)) {
+        (Some(left), Some(right)) => left.cmp(&right),
+        (Some(_), None) => Ordering::Less,
+        (None, Some(_)) => Ordering::Greater,
+        (None, None) => left.cmp(right),
+    }
 }
 
 struct DependencySorter<'a, C> {
@@ -117,11 +151,15 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::{ContainerID, ImageID, RuntimeContainer, UpdateParams};
 
     #[derive(Clone, Debug, PartialEq, Eq)]
     struct MockContainer {
+        id: ContainerID,
         name: String,
         links: Vec<String>,
+        image_id: ImageID,
+        created_at: String,
     }
 
     impl SortableContainer for MockContainer {
@@ -134,15 +172,63 @@ mod tests {
         }
     }
 
+    impl RuntimeContainer for MockContainer {
+        fn id(&self) -> &ContainerID {
+            &self.id
+        }
+
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        fn links(&self) -> &[String] {
+            &self.links
+        }
+
+        fn image_id(&self) -> &ImageID {
+            &self.image_id
+        }
+
+        fn created_at(&self) -> &str {
+            &self.created_at
+        }
+
+        fn is_watchtower(&self) -> bool {
+            false
+        }
+
+        fn is_stale(&self) -> bool {
+            false
+        }
+
+        fn set_stale(&mut self, _value: bool) {}
+
+        fn is_linked_to_restarting(&self) -> bool {
+            false
+        }
+
+        fn set_linked_to_restarting(&mut self, _value: bool) {}
+
+        fn is_monitor_only(&self, _params: &UpdateParams) -> bool {
+            false
+        }
+    }
+
     fn container(name: &str, links: &[&str]) -> MockContainer {
         MockContainer {
+            id: ContainerID::from(name),
             name: name.to_string(),
             links: links.iter().map(|link| (*link).to_string()).collect(),
+            image_id: ImageID::from("sha256:image"),
+            created_at: "2024-06-18T12:00:00Z".to_string(),
         }
     }
 
     fn names(containers: &[MockContainer]) -> Vec<&str> {
-        containers.iter().map(|container| container.name()).collect()
+        containers
+            .iter()
+            .map(|container| RuntimeContainer::name(container))
+            .collect()
     }
 
     #[test]
@@ -214,5 +300,22 @@ mod tests {
             .expect_err("cycle should fail");
 
         assert_eq!(err, "circular reference to /alpha");
+    }
+
+    #[test]
+    fn sort_by_created_at_orders_oldest_first() {
+        let sorted = sort_by_created_at(&[
+            MockContainer {
+                created_at: "2024-06-18T12:00:00Z".to_string(),
+                ..container("/new", &[])
+            },
+            MockContainer {
+                created_at: "2024-06-18T11:58:00Z".to_string(),
+                ..container("/old", &[])
+            },
+        ]);
+
+        assert_eq!(RuntimeContainer::name(&sorted[0]), "/old");
+        assert_eq!(RuntimeContainer::name(&sorted[1]), "/new");
     }
 }

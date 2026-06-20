@@ -21,4 +21,5 @@ Rules:
 - `sccache` usage is mandatory for builds and tests in this workspace and requires both support services:
   - Redis: `192.168.1.230`
   - sccache-dist: `192.168.1.220`
+- Verwendung ist Pflicht.
 - Running builds or tests without `sccache`, or with only one of the two endpoints configured, is not allowed.

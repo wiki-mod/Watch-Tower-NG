@@ -142,6 +142,7 @@ pub struct ContainerInspect {
     pub id: ContainerID,
     pub name: String,
     pub image: ImageID,
+    pub created: String,
     pub state: ContainerState,
     pub config: Option<ContainerConfig>,
     pub host_config: Option<HostConfig>,
@@ -163,6 +164,7 @@ impl Default for ContainerInspect {
             id: ContainerID::new(""),
             name: String::new(),
             image: ImageID::new(""),
+            created: String::new(),
             state: ContainerState::default(),
             config: None,
             host_config: None,
@@ -397,6 +399,14 @@ impl Container {
     /// Return the cached image ID, or an empty value when inspection data is missing.
     pub fn image_id(&self) -> &ImageID {
         &self.resolved_image_id
+    }
+
+    /// Return the container creation timestamp if available.
+    pub fn created_at(&self) -> &str {
+        self.container_info
+            .as_ref()
+            .map(|info| info.created.as_str())
+            .unwrap_or("")
     }
 
     /// Return the image ID if image inspection data is available.
@@ -645,6 +655,35 @@ impl FilterableContainer for Container {
     }
 }
 
+#[cfg(test)]
+impl crate::sorter::SortableContainer for Container {
+    fn name(&self) -> &str {
+        self.name()
+    }
+
+    fn links(&self) -> &[String] {
+        self.links()
+    }
+}
+
+impl crate::session::ContainerLike for Container {
+    fn id(&self) -> &ContainerID {
+        self.id()
+    }
+
+    fn name(&self) -> &str {
+        self.name()
+    }
+
+    fn image_name(&self) -> &str {
+        self.image_name()
+    }
+
+    fn current_image_id(&self) -> &ImageID {
+        self.image_id()
+    }
+}
+
 impl RuntimeContainer for Container {
     fn id(&self) -> &ContainerID {
         self.id()
@@ -660,6 +699,10 @@ impl RuntimeContainer for Container {
 
     fn image_id(&self) -> &ImageID {
         self.image_id()
+    }
+
+    fn created_at(&self) -> &str {
+        self.created_at()
     }
 
     fn is_watchtower(&self) -> bool {
@@ -703,6 +746,7 @@ mod tests {
             id: ContainerID::from("container_id"),
             name: "test-containrrr".to_string(),
             image: ImageID::from("sha256:current"),
+            created: "2024-06-18T12:00:00Z".to_string(),
             state: ContainerState {
                 running: true,
                 restarting: false,
@@ -805,6 +849,7 @@ mod tests {
 
         let container_depends_on = Container::new(
             ContainerInspect {
+                created: "2024-06-18T12:00:00Z".to_string(),
                 config: Some(ContainerConfig {
                     labels: labels(&[(DEPENDS_ON_LABEL, "postgres,redis")]),
                     ..ContainerConfig::default()

@@ -295,6 +295,7 @@ mod tests {
                 id: ContainerID::new(id),
                 name: name.to_string(),
                 image: ImageID::new("sha256:image"),
+                created: "2024-06-18T12:00:00Z".to_string(),
                 state: ContainerState {
                     running,
                     restarting,

@@ -1,0 +1,40 @@
+name: Manual Build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: Build and test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: dev/work/watchtower-rs
+          cache-on-failure: true
+
+      - name: Format check
+        working-directory: dev/work/watchtower-rs
+        run: cargo fmt --all --check
+
+      - name: Build
+        working-directory: dev/work/watchtower-rs
+        run: cargo build --locked
+
+      - name: Test
+        working-directory: dev/work/watchtower-rs
+        run: cargo test --locked

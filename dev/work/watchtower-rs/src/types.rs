@@ -115,6 +115,7 @@ pub trait RuntimeContainer {
     fn name(&self) -> &str;
     fn links(&self) -> &[String];
     fn image_id(&self) -> &ImageID;
+    fn created_at(&self) -> &str;
     fn is_watchtower(&self) -> bool;
     fn is_stale(&self) -> bool;
     fn set_stale(&mut self, value: bool);
@@ -309,6 +310,10 @@ mod tests {
 
         fn image_id(&self) -> &ImageID {
             &self.image_id
+        }
+
+        fn created_at(&self) -> &str {
+            ""
         }
 
         fn is_watchtower(&self) -> bool {
