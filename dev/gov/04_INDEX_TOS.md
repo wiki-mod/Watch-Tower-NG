@@ -3814,7 +3814,7 @@ Kurzbegruendung: "Initiale Inventur auf Basis der echten Worktree-Datei; Target 
 ```yaml
 Index ID: "IDX-0108"
 Source Path: "old-source/pkg/notifications/preview/data/data.go"
-Target Path: "dev/work/watchtower-rs/src/notifications/preview.rs"
+Target Path: "dev/work/watchtower-rs/src/notifications/preview/data.rs"
 Dateityp: "Go-Quelldatei"
 Dateigroesse: "3405 B"
 Source Hash: "b25ddfa6ccfa1c2f2d04b4220045d7c5f1a08739c62e4cab86154278d803214c"
@@ -3842,14 +3842,14 @@ Blocker: "Inventur-Eintrag angelegt; ein naheliegender Zielpfad existiert bereit
 Nachbeauftragung noetig: "Ja"
 Letzter Bearbeitungszeitpunkt: "2026-06-20T08:32:32+02:00"
 Letzter Commit oder Patch Nachweis: "Kein Git-Nachweis gefunden"
-Kurzbegruendung: "Initiale Inventur auf Basis der echten Worktree-Datei; Target Path spiegelt das vorhandene Notification-Preview-Modul; alle Migrations-, Qualitaets- und Paritaetsfelder bleiben bis zur Einzelbearbeitung offen."
+Kurzbegruendung: "Initiale Inventur auf Basis der echten Worktree-Datei; Target Path folgt jetzt der file-rooted Preview-Aufteilung auf data.rs und vermeidet damit den Konflikt mit dem Root-Modul; alle Migrations-, Qualitaets- und Paritaetsfelder bleiben bis zur Einzelbearbeitung offen."
 ```
 
 ## IDX-0109
 ```yaml
 Index ID: "IDX-0109"
 Source Path: "old-source/pkg/notifications/preview/data/logs.go"
-Target Path: "dev/work/watchtower-rs/src/notifications/preview.rs"
+Target Path: "dev/work/watchtower-rs/src/notifications/preview/logs.rs"
 Dateityp: "Go-Quelldatei"
 Dateigroesse: "1175 B"
 Source Hash: "2bbbd7b0382f96a39b258a8a89113174f3c1171d34b929f979b071391f2355ec"
@@ -3884,7 +3884,7 @@ Kurzbegruendung: "Initiale Inventur auf Basis der echten Worktree-Datei; Target 
 ```yaml
 Index ID: "IDX-0110"
 Source Path: "old-source/pkg/notifications/preview/data/preview_strings.go"
-Target Path: "dev/work/watchtower-rs/src/notifications/preview.rs"
+Target Path: "dev/work/watchtower-rs/src/notifications/preview/preview_strings.rs"
 Dateityp: "Go-Quelldatei"
 Dateigroesse: "4957 B"
 Source Hash: "4790470a32acc66d6ff085f386305a0dce6fbe7dffbbee457dc53c126ad3253b"
@@ -3919,7 +3919,7 @@ Kurzbegruendung: "Initiale Inventur auf Basis der echten Worktree-Datei; Target 
 ```yaml
 Index ID: "IDX-0111"
 Source Path: "old-source/pkg/notifications/preview/data/report.go"
-Target Path: "dev/work/watchtower-rs/src/notifications/preview.rs"
+Target Path: "dev/work/watchtower-rs/src/notifications/preview/report.rs"
 Dateityp: "Go-Quelldatei"
 Dateigroesse: "2643 B"
 Source Hash: "80c161832445dcdf718040f462562a03d8adcbe996f91bbd8dca8d92472ecef4"
@@ -3954,7 +3954,7 @@ Kurzbegruendung: "Initiale Inventur auf Basis der echten Worktree-Datei; Target 
 ```yaml
 Index ID: "IDX-0112"
 Source Path: "old-source/pkg/notifications/preview/data/status.go"
-Target Path: "dev/work/watchtower-rs/src/notifications/preview.rs"
+Target Path: "dev/work/watchtower-rs/src/notifications/preview/status.rs"
 Dateityp: "Go-Quelldatei"
 Dateigroesse: "793 B"
 Source Hash: "6b8e73820fc04957f07da6fe2abdfd9ee1930988fff6bda0a0a5ed6ffa8b2fb6"
@@ -3989,7 +3989,7 @@ Kurzbegruendung: "Initiale Inventur auf Basis der echten Worktree-Datei; Target 
 ```yaml
 Index ID: "IDX-0113"
 Source Path: "old-source/pkg/notifications/preview/tplprev.go"
-Target Path: "dev/work/watchtower-rs/src/notifications/preview.rs"
+Target Path: "dev/work/watchtower-rs/src/bin/tplprev.rs"
 Dateityp: "Go-Quelldatei"
 Dateigroesse: "748 B"
 Source Hash: "44caf7ed812d280262713d68e7b9b3034367b5aefec03bbd8e8523b0b2d373d7"
