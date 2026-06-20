@@ -1,0 +1,52 @@
+#
+# Builder
+#
+
+FROM rust:1.85-alpine AS builder
+
+# Use version (for example "v0.3.3") or "main"
+ARG WATCHTOWER_VERSION=main
+ARG RUN_TESTS=true
+
+# Pre-download required crates to avoid redownloading at each build thanks to docker layer caching.
+# Copying Cargo.toml and Cargo.lock ensures the layer/build cache is invalidated if dependencies change.
+WORKDIR /watchtower
+COPY Cargo.toml .
+COPY Cargo.lock .
+COPY src/lib.rs ./src/
+COPY src/main.rs ./src/
+RUN cargo fetch --locked
+
+# Install build tooling and certificates so TLS and time zone data remain available.
+RUN apk add --no-cache \
+    alpine-sdk \
+    ca-certificates \
+    git \
+    tzdata
+
+COPY . /watchtower
+
+RUN \
+  cd /watchtower && \
+  \
+  # Build the release binary and run tests
+  cargo build --locked --release && \
+  if [ "${RUN_TESTS}" = "true" ]; then cargo test --locked; fi
+
+
+#
+# watchtower
+#
+
+FROM scratch
+
+LABEL "com.centurylinklabs.watchtower"="true"
+
+# Copy certificates and time zone data from the builder stage so runtime TLS/time zone lookups work.
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
+COPY --from=builder /watchtower/target/release/watchtower-rs /watchtower
+
+HEALTHCHECK CMD [ "/watchtower", "--health-check"]
+
+ENTRYPOINT ["/watchtower"]

@@ -74,6 +74,41 @@ impl ContainerStatus {
         }
     }
 
+    /// Return the container ID.
+    pub fn id(&self) -> &ContainerID {
+        &self.container_id
+    }
+
+    /// Return the container name.
+    pub fn name(&self) -> &str {
+        &self.container_name
+    }
+
+    /// Return the image ID that the container used when the session started.
+    pub fn current_image_id(&self) -> &ImageID {
+        &self.current_image_id
+    }
+
+    /// Return the newest image ID found during the session.
+    pub fn latest_image_id(&self) -> &ImageID {
+        &self.latest_image_id
+    }
+
+    /// Return the name:tag that the container uses.
+    pub fn image_name(&self) -> &str {
+        &self.image_name
+    }
+
+    /// Return the error, if any, that was encountered for the container during a session.
+    pub fn error(&self) -> &str {
+        self.error.as_deref().unwrap_or("")
+    }
+
+    /// Return the current state label.
+    pub fn state(&self) -> &'static str {
+        self.state.as_str()
+    }
+
     /// Return the state label used in the aggregated report.
     pub fn state_label(&self) -> &'static str {
         self.state.as_str()
@@ -119,11 +154,7 @@ impl Progress {
     }
 
     /// Add a skipped container to the session.
-    pub fn add_skipped(
-        &mut self,
-        container: &impl ContainerLike,
-        err: impl ToString,
-    ) {
+    pub fn add_skipped(&mut self, container: &impl ContainerLike, err: impl ToString) {
         let mut update = ContainerStatus::from_container(
             container,
             container.current_image_id().clone(),
@@ -262,11 +293,13 @@ mod tests {
 
         let status = ContainerStatus::from_container(&container, "new", State::Updated);
 
-        assert_eq!(status.container_id, ContainerID::from("sha256:1234567890abcdef"));
-        assert_eq!(status.container_name, "app");
-        assert_eq!(status.image_name, "example/app:latest");
-        assert_eq!(status.current_image_id, ImageID::from("old"));
-        assert_eq!(status.latest_image_id, ImageID::from("new"));
+        assert_eq!(status.id(), &ContainerID::from("sha256:1234567890abcdef"));
+        assert_eq!(status.name(), "app");
+        assert_eq!(status.image_name(), "example/app:latest");
+        assert_eq!(status.current_image_id(), &ImageID::from("old"));
+        assert_eq!(status.latest_image_id(), &ImageID::from("new"));
+        assert_eq!(status.error(), "");
+        assert_eq!(status.state(), "Updated");
         assert_eq!(status.state_label(), "Updated");
         assert_eq!(State::Unknown.as_str(), "Unknown");
     }
@@ -329,12 +362,54 @@ mod tests {
 
         let report = progress.report();
 
-        assert_eq!(report.scanned.iter().map(|entry| entry.id.as_str()).collect::<Vec<_>>(), vec!["a", "b", "c", "d"]);
-        assert_eq!(report.updated.iter().map(|entry| entry.id.as_str()).collect::<Vec<_>>(), vec!["c"]);
-        assert_eq!(report.failed.iter().map(|entry| entry.id.as_str()).collect::<Vec<_>>(), vec!["b"]);
-        assert_eq!(report.skipped.iter().map(|entry| entry.id.as_str()).collect::<Vec<_>>(), vec!["e"]);
-        assert_eq!(report.fresh.iter().map(|entry| entry.id.as_str()).collect::<Vec<_>>(), vec!["d"]);
-        assert_eq!(report.stale.iter().map(|entry| entry.id.as_str()).collect::<Vec<_>>(), vec!["a"]);
+        assert_eq!(
+            report
+                .scanned
+                .iter()
+                .map(|entry| entry.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["a", "b", "c", "d"]
+        );
+        assert_eq!(
+            report
+                .updated
+                .iter()
+                .map(|entry| entry.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["c"]
+        );
+        assert_eq!(
+            report
+                .failed
+                .iter()
+                .map(|entry| entry.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["b"]
+        );
+        assert_eq!(
+            report
+                .skipped
+                .iter()
+                .map(|entry| entry.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["e"]
+        );
+        assert_eq!(
+            report
+                .fresh
+                .iter()
+                .map(|entry| entry.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["d"]
+        );
+        assert_eq!(
+            report
+                .stale
+                .iter()
+                .map(|entry| entry.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["a"]
+        );
         assert_eq!(report.stale[0].state, "Stale");
     }
 }

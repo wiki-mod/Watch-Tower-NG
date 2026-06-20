@@ -6,15 +6,15 @@ use std::net::TcpStream;
 use std::process::Command;
 use std::time::Duration;
 
+use serde::Deserialize;
 use thiserror::Error;
+use tracing::debug;
 
-use super::manifest;
+use super::{auth, manifest};
+use crate::meta;
 
 /// Docker registry response header containing the image digest.
 pub const CONTENT_DIGEST_HEADER: &str = "Docker-Content-Digest";
-
-/// Historical Watchtower user agent used for registry requests.
-pub const USER_AGENT: &str = "Watchtower/v0.0.0-unknown";
 
 /// Result type used by the digest helpers.
 pub type Result<T> = std::result::Result<T, DigestError>;
@@ -22,73 +22,53 @@ pub type Result<T> = std::result::Result<T, DigestError>;
 /// Errors raised by the digest helpers.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum DigestError {
-    #[error("registry auth payload could not be base64-decoded")]
-    InvalidRegistryAuthEncoding,
     #[error("container image info missing")]
     MissingImageInfo,
     #[error("could not fetch token")]
     MissingToken,
+    #[error("{0}")]
+    AuthFailed(String),
     #[error("invalid image reference `{image_ref}`: {reason}")]
     InvalidImageReference { image_ref: String, reason: String },
     #[error("registry responded to head request with {status:?}, auth: {auth}")]
     RegistryHeadRejected { status: String, auth: String },
-    #[error("registry response did not include `{0}`")]
-    MissingDigestHeader(String),
     #[error("registry request failed: {0}")]
     RequestFailed(String),
-    #[error("invalid digest entry `{digest}`")]
-    InvalidLocalDigest { digest: String },
-}
-
-/// Minimal token source surface used by `compare_digest`.
-pub trait TokenSource {
-    fn get_token(&self, image_ref: &str, registry_auth: &str) -> Result<String>;
 }
 
 /// Transform a base64-encoded JSON auth blob into a base64 `username:password`
 /// payload. Inputs that are already a basic-auth payload are returned unchanged.
-pub fn transform_auth(registry_auth: &str) -> Result<String> {
+pub fn transform_auth(registry_auth: &str) -> String {
     if registry_auth.is_empty() {
-        return Ok(String::new());
+        return String::new();
     }
 
     let decoded = match decode_base64_standard(registry_auth) {
         Ok(decoded) => decoded,
-        Err(_) => return Ok(registry_auth.to_string()),
+        Err(_) => return registry_auth.to_string(),
     };
 
     let Ok(decoded) = String::from_utf8(decoded) else {
-        return Ok(registry_auth.to_string());
+        return registry_auth.to_string();
     };
 
-    let Some(username) = extract_json_string_field(&decoded, "username") else {
-        return Ok(registry_auth.to_string());
-    };
-    let Some(password) = extract_json_string_field(&decoded, "password") else {
-        return Ok(registry_auth.to_string());
+    let Ok(credentials) = serde_json::from_str::<RegistryCredentials>(&decoded) else {
+        return registry_auth.to_string();
     };
 
-    if username.is_empty() || password.is_empty() {
-        return Ok(registry_auth.to_string());
+    if credentials.username.is_empty() || credentials.password.is_empty() {
+        return registry_auth.to_string();
     }
 
-    Ok(encode_base64_standard(format!("{username}:{password}").as_bytes()))
+    encode_base64_standard(format!("{}:{}", credentials.username, credentials.password).as_bytes())
 }
 
 /// Compare a registry digest against local repository digests.
-///
-/// The caller passes the image reference and repo digests directly so this
-/// module stays independent from the yet-to-land auth/container wiring.
-pub fn compare_digest<D, T>(
+pub fn compare_digest<D: AsRef<str>>(
     image_ref: &str,
     repo_digests: &[D],
     registry_auth: &str,
-    token_source: &T,
-) -> Result<bool>
-where
-    D: AsRef<str>,
-    T: TokenSource,
-{
+) -> Result<bool> {
     let digest_url = manifest::build_manifest_url(image_ref).map_err(|err| {
         DigestError::InvalidImageReference {
             image_ref: image_ref.to_string(),
@@ -96,47 +76,16 @@ where
         }
     })?;
 
-    compare_digest_with_url(repo_digests, &digest_url, registry_auth, token_source)
-}
-
-/// Compare a registry digest against local repository digests using an already
-/// resolved manifest URL.
-pub fn compare_digest_with_url<D, T>(
-    repo_digests: &[D],
-    digest_url: &str,
-    registry_auth: &str,
-    token_source: &T,
-) -> Result<bool>
-where
-    D: AsRef<str>,
-    T: TokenSource,
-{
-    if repo_digests.is_empty() {
-        return Err(DigestError::MissingImageInfo);
-    }
-
-    let registry_auth = transform_auth(registry_auth)?;
-    let token = token_source.get_token(digest_url, &registry_auth)?;
-    if token.trim().is_empty() {
-        return Err(DigestError::MissingToken);
-    }
-
-    let remote_digest = get_digest(&digest_url, &token)?;
-
-    for digest in repo_digests {
-        let digest = digest.as_ref();
-        let Some((_, local_digest)) = digest.split_once('@') else {
-            return Err(DigestError::InvalidLocalDigest {
-                digest: digest.to_string(),
-            });
-        };
-
-        if local_digest == remote_digest {
-            return Ok(true);
-        }
-    }
-
-    Ok(false)
+    compare_digest_impl(
+        image_ref,
+        repo_digests,
+        &digest_url,
+        registry_auth,
+        |image_ref, registry_auth| {
+            auth::get_token(image_ref, registry_auth)
+                .map_err(|err| DigestError::AuthFailed(err.to_string()))
+        },
+    )
 }
 
 /// Fetch the remote digest via a `HEAD` request.
@@ -157,11 +106,51 @@ pub fn get_digest(url: &str, token: &str) -> Result<String> {
         }
     };
 
-    digest_from_response(&response.status_line, response.headers)
+    Ok(
+        digest_from_response(&response.status_line, response.headers)?
+    )
+}
+
+fn compare_digest_impl<D, F>(
+    token_target: &str,
+    repo_digests: &[D],
+    digest_url: &str,
+    registry_auth: &str,
+    token_resolver: F,
+) -> Result<bool>
+where
+    D: AsRef<str>,
+    F: FnOnce(&str, &str) -> Result<String>,
+{
+    if repo_digests.is_empty() {
+        return Err(DigestError::MissingImageInfo);
+    }
+
+    let registry_auth = transform_auth(registry_auth);
+    let token = token_resolver(token_target, &registry_auth)?;
+    if token.trim().is_empty() {
+        return Err(DigestError::MissingToken);
+    }
+
+    let remote_digest = get_digest(digest_url, &token)?;
+    debug!(remote = %remote_digest, "Found a remote digest to compare with");
+
+    for digest in repo_digests {
+        let digest = digest.as_ref();
+        let local_digest = digest.split('@').nth(1).unwrap();
+        debug!(local = %local_digest, remote = %remote_digest, "Comparing");
+
+        if local_digest == remote_digest {
+            debug!("Found a match");
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
 }
 
 /// Evaluate a registry HEAD response without performing the transport call.
-pub fn digest_from_response(status_line: &str, headers: HashMap<String, String>) -> Result<String> {
+fn digest_from_response(status_line: &str, headers: HashMap<String, String>) -> Result<String> {
     let response = HttpResponse {
         status_line: status_line.to_string(),
         status_code: parse_status_code(status_line)?,
@@ -180,11 +169,13 @@ pub fn digest_from_response(status_line: &str, headers: HashMap<String, String>)
         });
     }
 
-    response
-        .headers
-        .get(&CONTENT_DIGEST_HEADER.to_ascii_lowercase())
-        .cloned()
-        .ok_or_else(|| DigestError::MissingDigestHeader(CONTENT_DIGEST_HEADER.to_string()))
+    Ok(
+        response
+            .headers
+            .get(&CONTENT_DIGEST_HEADER.to_ascii_lowercase())
+            .cloned()
+            .unwrap_or_default(),
+    )
 }
 
 fn head_request_http(parsed: &ParsedUrl, token: &str) -> Result<HttpResponse> {
@@ -221,7 +212,7 @@ fn head_request_http(parsed: &ParsedUrl, token: &str) -> Result<HttpResponse> {
         ),
         path = path,
         host = host_header,
-        user_agent = USER_AGENT,
+        user_agent = meta::user_agent(),
         token = token
     );
     stream
@@ -245,7 +236,7 @@ fn head_request_curl(url: &str, token: &str) -> Result<HttpResponse> {
             "--request",
             "HEAD",
             "-H",
-            &format!("User-Agent: {USER_AGENT}"),
+            &format!("User-Agent: {}", meta::user_agent()),
             "-H",
             &format!("Authorization: {token}"),
             "-H",
@@ -352,7 +343,7 @@ fn decode_base64_standard(input: &str) -> Result<Vec<u8>> {
                 padding += 1;
                 0
             }
-            _ => return Err(DigestError::InvalidRegistryAuthEncoding),
+            _ => return Err(DigestError::RequestFailed("invalid base64".to_string())),
         };
 
         chunk[chunk_len] = value;
@@ -366,7 +357,7 @@ fn decode_base64_standard(input: &str) -> Result<Vec<u8>> {
     }
 
     if chunk_len != 0 {
-        return Err(DigestError::InvalidRegistryAuthEncoding);
+        return Err(DigestError::RequestFailed("invalid base64".to_string()));
     }
 
     Ok(output)
@@ -386,7 +377,7 @@ fn decode_base64_chunk(chunk: &[u8; 4], padding: usize, output: &mut Vec<u8>) ->
         2 => {
             output.push((chunk[0] << 2) | (chunk[1] >> 4));
         }
-        _ => return Err(DigestError::InvalidRegistryAuthEncoding),
+        _ => return Err(DigestError::RequestFailed("invalid base64".to_string())),
     }
 
     Ok(())
@@ -427,44 +418,12 @@ fn encode_base64_standard(input: &[u8]) -> String {
     output
 }
 
-fn extract_json_string_field(input: &str, key: &str) -> Option<String> {
-    let needle = format!("\"{key}\"");
-    let start = input.find(&needle)? + needle.len();
-    let remainder = input[start..].trim_start();
-    let remainder = remainder.strip_prefix(':')?.trim_start();
-    let remainder = remainder.strip_prefix('"')?;
-
-    let mut value = String::new();
-    let mut chars = remainder.chars();
-    while let Some(ch) = chars.next() {
-        match ch {
-            '"' => return Some(value),
-            '\\' => {
-                let escaped = chars.next()?;
-                match escaped {
-                    '"' | '\\' | '/' => value.push(escaped),
-                    'b' => value.push('\u{0008}'),
-                    'f' => value.push('\u{000c}'),
-                    'n' => value.push('\n'),
-                    'r' => value.push('\r'),
-                    't' => value.push('\t'),
-                    'u' => {
-                        let mut codepoint = String::with_capacity(4);
-                        for _ in 0..4 {
-                            codepoint.push(chars.next()?);
-                        }
-                        let scalar = u16::from_str_radix(&codepoint, 16).ok()?;
-                        let ch = char::from_u32(scalar as u32)?;
-                        value.push(ch);
-                    }
-                    _ => return None,
-                }
-            }
-            other => value.push(other),
-        }
-    }
-
-    None
+#[derive(Debug, Deserialize)]
+struct RegistryCredentials {
+    #[serde(default)]
+    username: String,
+    #[serde(default)]
+    password: String,
 }
 
 #[derive(Debug)]
@@ -542,6 +501,31 @@ struct HttpResponse {
 }
 
 #[cfg(test)]
+trait TokenSource {
+    fn get_token(&self, image_ref: &str, registry_auth: &str) -> Result<String>;
+}
+
+#[cfg(test)]
+fn compare_digest_with_url<D, T>(
+    repo_digests: &[D],
+    digest_url: &str,
+    registry_auth: &str,
+    token_source: &T,
+) -> Result<bool>
+where
+    D: AsRef<str>,
+    T: TokenSource,
+{
+    compare_digest_impl(
+        digest_url,
+        repo_digests,
+        digest_url,
+        registry_auth,
+        |image_ref, auth| token_source.get_token(image_ref, auth),
+    )
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::net::TcpListener;
@@ -552,7 +536,7 @@ mod tests {
     fn transform_auth_rewrites_base64_json_credentials() {
         let auth = encode_base64_standard(br#"{"username":"alice","password":"secret"}"#);
 
-        let transformed = transform_auth(&auth).expect("transform should succeed");
+        let transformed = transform_auth(&auth);
 
         assert_eq!(transformed, encode_base64_standard(b"alice:secret"));
     }
@@ -561,32 +545,35 @@ mod tests {
     fn transform_auth_leaves_basic_auth_payloads_unchanged() {
         let auth = encode_base64_standard(b"alice:secret");
 
-        let transformed = transform_auth(&auth).expect("transform should succeed");
+        let transformed = transform_auth(&auth);
 
         assert_eq!(transformed, auth);
     }
 
     #[test]
     fn transform_auth_rejects_invalid_base64() {
-        let transformed = transform_auth("not-base64").expect("should preserve malformed payload");
+        let transformed = transform_auth("not-base64");
 
         assert_eq!(transformed, "not-base64");
     }
 
     #[test]
     fn get_digest_uses_head_and_returns_content_digest() {
-        let server = spawn_test_server(|request| {
-            assert!(request.starts_with("HEAD /v2/library/watchtower/manifests/latest HTTP/1.1"));
-            assert!(request.contains("User-Agent: Watchtower/v0.0.0-unknown"));
-            assert!(request.contains("Authorization: Bearer token"));
-            assert!(request.contains(
-                "Accept: application/vnd.docker.distribution.manifest.v2+json"
-            ));
-        }, |response| {
-            response.push_str("HTTP/1.1 200 OK\r\n");
-            response.push_str("Docker-Content-Digest: sha256:deadbeef\r\n");
-            response.push_str("Content-Length: 0\r\n\r\n");
-        });
+        let server = spawn_test_server(
+            |request| {
+                assert!(request.starts_with("HEAD /v2/library/watchtower/manifests/latest HTTP/1.1"));
+                assert!(request.contains(&format!("User-Agent: {}", meta::user_agent())));
+                assert!(request.contains("Authorization: Bearer token"));
+                assert!(request.contains(
+                    "Accept: application/vnd.docker.distribution.manifest.v2+json"
+                ));
+            },
+            |response| {
+                response.push_str("HTTP/1.1 200 OK\r\n");
+                response.push_str("Docker-Content-Digest: sha256:deadbeef\r\n");
+                response.push_str("Content-Length: 0\r\n\r\n");
+            },
+        );
 
         let digest = get_digest(
             &format!("http://{}/v2/library/watchtower/manifests/latest", server.addr),
@@ -599,13 +586,16 @@ mod tests {
 
     #[test]
     fn get_digest_reports_registry_error_details() {
-        let server = spawn_test_server(|request| {
-            assert!(request.starts_with("HEAD /v2/library/watchtower/manifests/latest HTTP/1.1"));
-        }, |response| {
-            response.push_str("HTTP/1.1 401 Unauthorized\r\n");
-            response.push_str("Www-Authenticate: Bearer realm=\"https://example.invalid\"\r\n");
-            response.push_str("Content-Length: 0\r\n\r\n");
-        });
+        let server = spawn_test_server(
+            |request| {
+                assert!(request.starts_with("HEAD /v2/library/watchtower/manifests/latest HTTP/1.1"));
+            },
+            |response| {
+                response.push_str("HTTP/1.1 401 Unauthorized\r\n");
+                response.push_str("Www-Authenticate: Bearer realm=\"https://example.invalid\"\r\n");
+                response.push_str("Content-Length: 0\r\n\r\n");
+            },
+        );
 
         let err = get_digest(
             &format!("http://{}/v2/library/watchtower/manifests/latest", server.addr),
@@ -627,13 +617,16 @@ mod tests {
         let registry_auth = encode_base64_standard(br#"{"username":"alice","password":"secret"}"#);
         let expected_basic = encode_base64_standard(b"alice:secret");
         let request_basic = expected_basic.clone();
-        let server = spawn_test_server(move |request| {
-            assert!(request.contains(&format!("Authorization: Basic {request_basic}")));
-        }, |response| {
-            response.push_str("HTTP/1.1 200 OK\r\n");
-            response.push_str("Docker-Content-Digest: sha256:abc123\r\n");
-            response.push_str("Content-Length: 0\r\n\r\n");
-        });
+        let server = spawn_test_server(
+            move |request| {
+                assert!(request.contains(&format!("Authorization: Basic {request_basic}")));
+            },
+            |response| {
+                response.push_str("HTTP/1.1 200 OK\r\n");
+                response.push_str("Docker-Content-Digest: sha256:abc123\r\n");
+                response.push_str("Content-Length: 0\r\n\r\n");
+            },
+        );
 
         struct MockTokenSource {
             expected_basic: String,

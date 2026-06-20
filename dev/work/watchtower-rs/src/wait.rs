@@ -35,11 +35,11 @@ where
 }
 
 /// Poll until a removal predicate returns `true` or the timeout expires.
-pub fn wait_for_removal_or_timeout<F>(wait_time: Duration, mut is_removed: F) -> WaitOutcome
+pub fn wait_for_removal_or_timeout<F>(wait_time: Duration, is_removed: F) -> WaitOutcome
 where
     F: FnMut() -> bool,
 {
-    poll_until(wait_time, || is_removed(), Duration::from_secs(1))
+    poll_until(wait_time, is_removed, Duration::from_secs(1))
 }
 
 /// Poll an exec state until it is no longer running.

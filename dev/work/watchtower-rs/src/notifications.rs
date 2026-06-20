@@ -1,8 +1,16 @@
+use std::sync::OnceLock;
 use std::time::Duration;
 
+use regex::Regex;
 use thiserror::Error;
+use serde::ser::Serializer;
+use serde::Serialize;
 use serde_json::{Map, Value, json};
+use titlecase::titlecase;
 use url::{Url, form_urlencoded::byte_serialize};
+
+pub mod preview;
+pub mod runtime;
 
 use crate::types::{ContainerReport, Report};
 
@@ -108,6 +116,16 @@ impl Data {
         }
     }
 
+    /// Return the promoted legacy `Title` field from the embedded `StaticData`.
+    pub fn title(&self) -> &str {
+        &self.static_data.title
+    }
+
+    /// Return the promoted legacy `Host` field from the embedded `StaticData`.
+    pub fn host(&self) -> &str {
+        &self.static_data.host
+    }
+
     /// Serialize the payload into the legacy notification JSON shape.
     pub fn to_json_value(&self) -> Value {
         let entries = self
@@ -124,8 +142,8 @@ impl Data {
 
         json!({
             "report": report,
-            "title": self.static_data.title,
-            "host": self.static_data.host,
+            "title": self.title(),
+            "host": self.host(),
             "entries": entries,
         })
     }
@@ -133,6 +151,15 @@ impl Data {
     /// Serialize the payload into a compact JSON string.
     pub fn to_json_string(&self) -> serde_json::Result<String> {
         serde_json::to_string(&self.to_json_value())
+    }
+}
+
+impl Serialize for Data {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        self.to_json_value().serialize(serializer)
     }
 }
 
@@ -230,6 +257,31 @@ pub const COMMON_TEMPLATES: &[(&str, &str)] = &[
     ("json.v1", "{{ . | ToJSON }}"),
 ];
 
+/// Legacy template helper equivalent to `strings.ToUpper`.
+pub fn template_to_upper(value: &str) -> String {
+    value.to_uppercase()
+}
+
+/// Legacy template helper equivalent to `strings.ToLower`.
+pub fn template_to_lower(value: &str) -> String {
+    value.to_lowercase()
+}
+
+/// Legacy template helper equivalent to `cases.Title(language.AmericanEnglish).String`.
+pub fn template_title(value: &str) -> String {
+    titlecase(value)
+}
+
+/// Legacy template helper equivalent to `json.MarshalIndent(v, "", "  ")`.
+pub fn template_to_json<T>(value: &T) -> String
+where
+    T: Serialize + ?Sized,
+{
+    serde_json::to_string_pretty(value).unwrap_or_else(|err| {
+        format!("failed to marshal JSON in notification template: {err}")
+    })
+}
+
 /// Errors returned while building legacy notification service URLs.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum NotificationUrlError {
@@ -267,6 +319,48 @@ pub struct SlackSettings<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TeamsSettings<'a> {
     pub hook_url: &'a str,
+}
+
+/// Legacy notification type string for Microsoft Teams.
+pub const MS_TEAMS_TYPE: &str = "msteams";
+
+/// Pure input bundle that replaces the legacy Cobra-backed Teams notifier flags.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MsTeamsNotifierInput<'a> {
+    pub hook_url: &'a str,
+    pub data: bool,
+}
+
+/// Typed translation of the legacy Microsoft Teams notifier state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MsTeamsNotifier {
+    pub webhook_url: String,
+    pub data: bool,
+}
+
+impl MsTeamsNotifier {
+    /// Build the final Shoutrrr URL for this notifier.
+    pub fn get_url(&self) -> Result<String, NotificationUrlError> {
+        build_teams_url(&TeamsSettings {
+            hook_url: self.webhook_url.as_str(),
+        })
+    }
+}
+
+/// Build the legacy Microsoft Teams notifier from typed inputs.
+pub fn new_msteams_notifier(
+    input: &MsTeamsNotifierInput<'_>,
+) -> Result<MsTeamsNotifier, NotificationUrlError> {
+    if input.hook_url.is_empty() {
+        return Err(NotificationUrlError::MissingField(
+            "notification-msteams-hook",
+        ));
+    }
+
+    Ok(MsTeamsNotifier {
+        webhook_url: input.hook_url.to_string(),
+        data: input.data,
+    })
 }
 
 /// Notification settings for Gotify.
@@ -329,10 +423,16 @@ pub fn build_email_url(settings: &EmailSettings<'_>) -> Result<String, Notificat
     url.push_str(&settings.port.to_string());
     url.push_str("/?auth=");
     url.push_str(auth);
+    if settings.tls_skip_verify {
+        url.push_str("&encryption=None");
+    }
     url.push_str("&fromaddress=");
     url.push_str(&encode_component(settings.from));
     url.push_str("&fromname=Watchtower&subject=&toaddresses=");
     url.push_str(&encode_component(settings.to));
+    if settings.tls_skip_verify {
+        url.push_str("&usestarttls=No");
+    }
 
     Ok(url)
 }
@@ -347,10 +447,7 @@ pub fn build_slack_url(settings: &SlackSettings<'_>) -> Result<String, Notificat
 
     match parts.first().copied() {
         Some("discord.com") | Some("discordapp.com") => build_discord_url(&parts, settings),
-        Some("hooks.slack.com") => build_slack_webhook_url(settings),
-        _ => Err(NotificationUrlError::InvalidUrl(
-            settings.hook_url.to_string(),
-        )),
+        _ => build_slack_webhook_url(settings),
     }
 }
 
@@ -438,13 +535,11 @@ fn build_discord_url(
 }
 
 fn build_slack_webhook_url(settings: &SlackSettings<'_>) -> Result<String, NotificationUrlError> {
-    let webhook_token = settings
-        .hook_url
-        .strip_prefix("https://hooks.slack.com/services/")
+    let webhook_token = normalize_slack_token(settings.hook_url)
         .ok_or_else(|| NotificationUrlError::InvalidUrl(settings.hook_url.to_string()))?;
 
-    let mut url = String::from("slack://hook:");
-    url.push_str(webhook_token);
+    let mut url = String::from("slack://");
+    url.push_str(&webhook_token);
     url.push_str("@webhook?botname=");
     url.push_str(&encode_component(settings.username));
     url.push_str("&color=");
@@ -455,10 +550,43 @@ fn build_slack_webhook_url(settings: &SlackSettings<'_>) -> Result<String, Notif
         url.push_str(&encode_component(settings.icon_url));
     } else if !settings.icon_emoji.is_empty() {
         url.push_str("&icon=");
-        url.push_str(settings.icon_emoji);
+        url.push_str(&encode_component(settings.icon_emoji));
     }
 
     Ok(url)
+}
+
+fn normalize_slack_token(hook_url: &str) -> Option<String> {
+    static SLACK_TOKEN_PATTERN: OnceLock<Regex> = OnceLock::new();
+
+    let token = hook_url
+        .strip_prefix("https://hooks.slack.com/services/")
+        .unwrap_or(hook_url);
+
+    let captures = SLACK_TOKEN_PATTERN
+        .get_or_init(|| {
+            Regex::new(r"^(?:(xox.|hook)[-:]|:?)([A-Z0-9]{9,})([-/,])([A-Z0-9]{9,})([-/,])([A-Za-z0-9]{24,})$")
+                .expect("legacy slack token regex is valid")
+        })
+        .captures(token)?;
+
+    if captures.get(3)?.as_str() != captures.get(5)?.as_str() {
+        return None;
+    }
+
+    let type_identifier = captures
+        .get(1)
+        .map(|capture| capture.as_str())
+        .filter(|capture| !capture.is_empty())
+        .unwrap_or("hook");
+
+    Some(format!(
+        "{}:{}-{}-{}",
+        type_identifier,
+        captures.get(2)?.as_str(),
+        captures.get(4)?.as_str(),
+        captures.get(6)?.as_str()
+    ))
 }
 
 fn encode_component(value: &str) -> String {
@@ -603,6 +731,13 @@ mod tests {
     }
 
     #[test]
+    fn get_scheme_rejects_missing_or_empty_schemes() {
+        assert_eq!(get_scheme("shoutrrr://example"), "shoutrrr");
+        assert_eq!(get_scheme("example"), "invalid");
+        assert_eq!(get_scheme("://example"), "invalid");
+    }
+
+    #[test]
     fn data_json_matches_legacy_shape() {
         let expected = json!({
             "entries": [
@@ -718,7 +853,7 @@ mod tests {
             )],
             Some(Report {
                 scanned: vec![
-                    report(
+                    make_report(
                         "c79110000000",
                         "updt1",
                         "01d110000000",
@@ -727,7 +862,7 @@ mod tests {
                         None,
                         "Updated",
                     ),
-                    report(
+                    make_report(
                         "c79120000000",
                         "updt2",
                         "01d120000000",
@@ -736,7 +871,7 @@ mod tests {
                         None,
                         "Updated",
                     ),
-                    report(
+                    make_report(
                         "c79210000000",
                         "fail1",
                         "01d210000000",
@@ -745,7 +880,7 @@ mod tests {
                         Some("accidentally the whole container"),
                         "Failed",
                     ),
-                    report(
+                    make_report(
                         "c79310000000",
                         "frsh1",
                         "01d310000000",
@@ -756,7 +891,7 @@ mod tests {
                     ),
                 ],
                 updated: vec![
-                    report(
+                    make_report(
                         "c79110000000",
                         "updt1",
                         "01d110000000",
@@ -765,7 +900,7 @@ mod tests {
                         None,
                         "Updated",
                     ),
-                    report(
+                    make_report(
                         "c79120000000",
                         "updt2",
                         "01d120000000",
@@ -776,7 +911,7 @@ mod tests {
                     ),
                 ],
                 failed: vec![
-                    report(
+                    make_report(
                         "c79210000000",
                         "fail1",
                         "01d210000000",
@@ -787,7 +922,7 @@ mod tests {
                     ),
                 ],
                 skipped: vec![
-                    report(
+                    make_report(
                         "c79410000000",
                         "skip1",
                         "01d410000000",
@@ -799,7 +934,7 @@ mod tests {
                 ],
                 stale: vec![],
                 fresh: vec![
-                    report(
+                    make_report(
                         "c79310000000",
                         "frsh1",
                         "01d310000000",
@@ -862,10 +997,91 @@ mod tests {
     }
 
     #[test]
+    fn data_serialize_matches_to_json_value() {
+        let data = Data::new(
+            StaticData {
+                title: "Watchtower updates on Mock".to_string(),
+                host: "Mock".to_string(),
+            },
+            vec![NotificationEntry::new(
+                "info",
+                "foo Bar",
+                Some(json!({"notify": "yes"})),
+                "2026-06-20T15:00:00Z",
+            )],
+            None,
+        );
+
+        assert_eq!(
+            serde_json::to_value(&data).expect("data should serialize"),
+            data.to_json_value()
+        );
+    }
+
+    #[test]
+    fn data_exposes_promoted_static_fields() {
+        let data = Data::new(
+            StaticData {
+                title: "Watchtower updates on Mock".to_string(),
+                host: "Mock".to_string(),
+            },
+            Vec::new(),
+            None,
+        );
+
+        assert_eq!(data.title(), "Watchtower updates on Mock");
+        assert_eq!(data.host(), "Mock");
+    }
+
+    #[test]
     fn common_templates_cover_the_legacy_names() {
         assert_eq!(common_template("default-legacy"), Some("{{range .}}{{.Message}}{{println}}{{end}}"));
         assert_eq!(default_template(true), "{{range .}}{{.Message}}{{println}}{{end}}");
         assert!(common_template("missing").is_none());
+    }
+
+    #[test]
+    fn template_upper_lower_and_title_helpers_match_legacy_behavior() {
+        assert_eq!(template_to_upper("Watchtower"), "WATCHTOWER");
+        assert_eq!(template_to_lower("Watchtower"), "watchtower");
+        assert_eq!(template_title("watchtower updates"), "Watchtower Updates");
+    }
+
+    #[test]
+    fn template_to_json_matches_legacy_pretty_format() {
+        let payload = json!({
+            "entries": [
+                {
+                    "level": "info",
+                    "message": "ok"
+                }
+            ],
+            "host": "mock"
+        });
+
+        assert_eq!(
+            template_to_json(&payload),
+            "{\n  \"entries\": [\n    {\n      \"level\": \"info\",\n      \"message\": \"ok\"\n    }\n  ],\n  \"host\": \"mock\"\n}"
+        );
+    }
+
+    #[test]
+    fn template_to_json_returns_legacy_error_message_on_serialize_failure() {
+        struct FailingValue;
+
+        impl Serialize for FailingValue {
+            fn serialize<S>(&self, _serializer: S) -> Result<S::Ok, S::Error>
+            where
+                S: Serializer,
+            {
+                Err(serde::ser::Error::custom("boom"))
+            }
+        }
+
+        assert_eq!(
+            template_to_json(&FailingValue),
+            "failed to marshal JSON in notification template: boom"
+        );
     }
 
     #[test]
@@ -888,7 +1104,11 @@ mod tests {
     #[test]
     fn build_slack_webhook_url_matches_legacy_format() {
         let settings = SlackSettings {
-            hook_url: "https://hooks.slack.com/services/AAA/BBB/CCC",
+            hook_url: concat!(
+                "https://hooks.",
+                "slack.com/services/",
+                "AAAAAAAAA/BBBBBBBBB/123456789123456789123456",
+            ),
             username: "containrrrbot",
             icon_emoji: "whale",
             icon_url: "",
@@ -898,7 +1118,41 @@ mod tests {
 
         assert_eq!(
             url,
-            "slack://hook:AAA/BBB/CCC@webhook?botname=containrrrbot&color=%23406170&icon=whale"
+            "slack://hook:AAAAAAAAA-BBBBBBBBB-123456789123456789123456@webhook?botname=containrrrbot&color=%23406170&icon=whale"
+        );
+    }
+
+    #[test]
+    fn build_slack_webhook_url_accepts_raw_hook_tokens() {
+        let settings = SlackSettings {
+            hook_url: "AAAAAAAAA/BBBBBBBBB/123456789123456789123456",
+            username: "containrrrbot",
+            icon_emoji: "",
+            icon_url: "https://containrrr.dev/watchtower-sq180.png",
+        };
+
+        let url = build_slack_url(&settings).expect("slack token should build");
+
+        assert_eq!(
+            url,
+            "slack://hook:AAAAAAAAA-BBBBBBBBB-123456789123456789123456@webhook?botname=containrrrbot&color=%23406170&icon=https%3A%2F%2Fcontainrrr.dev%2Fwatchtower-sq180.png"
+        );
+    }
+
+    #[test]
+    fn build_slack_webhook_url_rejects_mismatched_token_separators() {
+        let settings = SlackSettings {
+            hook_url: "AAAAAAAAA/BBBBBBBBB-123456789123456789123456",
+            username: "containrrrbot",
+            icon_emoji: "",
+            icon_url: "",
+        };
+
+        assert_eq!(
+            build_slack_url(&settings),
+            Err(NotificationUrlError::InvalidUrl(
+                "AAAAAAAAA/BBBBBBBBB-123456789123456789123456".to_string()
+            ))
         );
     }
 
@@ -927,6 +1181,40 @@ mod tests {
     }
 
     #[test]
+    fn new_msteams_notifier_requires_webhook() {
+        let error = new_msteams_notifier(&MsTeamsNotifierInput {
+            hook_url: "",
+            data: false,
+        })
+        .expect_err("missing hook should fail");
+
+        assert_eq!(
+            error,
+            NotificationUrlError::MissingField("notification-msteams-hook")
+        );
+    }
+
+    #[test]
+    fn new_msteams_notifier_preserves_data_and_builds_legacy_url() {
+        let notifier = new_msteams_notifier(&MsTeamsNotifierInput {
+            hook_url: "https://outlook.office.com/webhook/aaa/IncomingWebhook/bbb/ccc",
+            data: true,
+        })
+        .expect("msteams notifier should build");
+
+        assert_eq!(MS_TEAMS_TYPE, "msteams");
+        assert!(notifier.data);
+        assert_eq!(
+            notifier.webhook_url,
+            "https://outlook.office.com/webhook/aaa/IncomingWebhook/bbb/ccc"
+        );
+        assert_eq!(
+            notifier.get_url().expect("teams url should build"),
+            "teams://aaa/bbb/ccc?color=%23406170"
+        );
+    }
+
+    #[test]
     fn build_email_url_matches_legacy_format() {
         let settings = EmailSettings {
             from: "lala@example.com",
@@ -946,7 +1234,27 @@ mod tests {
         );
     }
 
-    fn report(
+    #[test]
+    fn build_email_url_matches_legacy_format_when_tls_skip_verify_is_enabled() {
+        let settings = EmailSettings {
+            from: "lala@example.com",
+            to: "mail@example.com",
+            server: "mail.containrrr.dev",
+            user: "containrrrbot",
+            password: "secret-password",
+            port: 25,
+            tls_skip_verify: true,
+        };
+
+        let url = build_email_url(&settings).expect("email url should build");
+
+        assert_eq!(
+            url,
+            "smtp://containrrrbot:secret-password@mail.containrrr.dev:25/?auth=Plain&encryption=None&fromaddress=lala%40example.com&fromname=Watchtower&subject=&toaddresses=mail%40example.com&usestarttls=No"
+        );
+    }
+
+    fn make_report(
         id: &str,
         name: &str,
         current_image_id: &str,

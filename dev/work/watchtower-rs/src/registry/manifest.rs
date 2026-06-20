@@ -1,87 +1,111 @@
 #![forbid(unsafe_code)]
 
-use std::error::Error;
-use std::fmt;
+use thiserror::Error;
+use tracing::debug;
+
+use crate::registry::helpers;
 
 /// Result type returned by the manifest URL builder.
 pub type Result<T> = std::result::Result<T, ManifestUrlError>;
 
 /// Errors that can occur while building a registry manifest URL.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum ManifestUrlError {
-    /// The image reference was empty after trimming whitespace.
-    EmptyImageRef,
-    /// The image reference did not contain an explicit tag.
-    UntaggedImageRef { image_ref: String },
-    /// The image reference could not be split into registry and repository.
-    InvalidImageRef { image_ref: String, reason: String },
+    /// The image reference could not be interpreted as a valid Docker reference.
+    #[error("invalid image reference {image_ref:?}: {reason}")]
+    InvalidImageReference { image_ref: String, reason: String },
 }
 
-impl fmt::Display for ManifestUrlError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::EmptyImageRef => f.write_str("image reference must not be empty"),
-            Self::UntaggedImageRef { image_ref } => {
-                write!(f, "parsed container image ref has no tag: {image_ref}")
-            }
-            Self::InvalidImageRef { image_ref, reason } => {
-                write!(f, "invalid image reference {image_ref:?}: {reason}")
-            }
-        }
-    }
-}
-
-impl Error for ManifestUrlError {}
-
-/// Build the Docker registry manifest URL for a container image reference.
+/// Build the Docker registry manifest URL for an image reference.
 ///
 /// The resulting URL follows the legacy Watchtower convention:
 /// `https://<registry-host>/v2/<repository-path>/manifests/<tag>`
 pub fn build_manifest_url(image_ref: &str) -> Result<String> {
-    let image_ref = image_ref.trim();
-    if image_ref.is_empty() {
-        return Err(ManifestUrlError::EmptyImageRef);
-    }
-
+    let image_ref = validate_image_reference(image_ref)?;
     let (name_ref, tag) = split_tag(image_ref)?;
     let (host, path) = split_registry_and_path(name_ref)?;
+
+    debug!(
+        image = %path,
+        tag = %tag,
+        normalized = %name_ref,
+        host = %host,
+        "Parsing image ref"
+    );
 
     Ok(format!("https://{host}/v2/{path}/manifests/{tag}"))
 }
 
+fn validate_image_reference(image_ref: &str) -> Result<&str> {
+    if image_ref.is_empty() {
+        return Err(ManifestUrlError::InvalidImageReference {
+            image_ref: image_ref.to_string(),
+            reason: "image reference must not be empty".to_string(),
+        });
+    }
+
+    if image_ref.chars().any(char::is_whitespace) {
+        return Err(ManifestUrlError::InvalidImageReference {
+            image_ref: image_ref.to_string(),
+            reason: "invalid reference format".to_string(),
+        });
+    }
+
+    Ok(image_ref)
+}
+
 fn split_tag(image_ref: &str) -> Result<(&str, &str)> {
-    let name_ref = image_ref.split_once('@').map_or(image_ref, |(left, _)| left);
-    let slash_pos = name_ref.rfind('/');
-    let tag_pos = name_ref.rfind(':');
+    if image_ref.contains('@') {
+        return Err(ManifestUrlError::InvalidImageReference {
+            image_ref: image_ref.to_string(),
+            reason: "invalid reference format".to_string(),
+        });
+    }
+
+    let slash_pos = image_ref.rfind('/');
+    let tag_pos = image_ref.rfind(':');
 
     if let Some(tag_pos) = tag_pos {
         if slash_pos.is_none_or(|slash_pos| tag_pos > slash_pos) {
-            let tag = &name_ref[tag_pos + 1..];
+            let tag = &image_ref[tag_pos + 1..];
             if tag.is_empty() {
-                return Err(ManifestUrlError::UntaggedImageRef {
+                return Err(ManifestUrlError::InvalidImageReference {
                     image_ref: image_ref.to_string(),
+                    reason: "invalid reference format".to_string(),
                 });
             }
 
-            return Ok((&name_ref[..tag_pos], tag));
+            return Ok((&image_ref[..tag_pos], tag));
         }
     }
 
-    Err(ManifestUrlError::UntaggedImageRef {
-        image_ref: image_ref.to_string(),
-    })
+    Ok((image_ref, "latest"))
 }
 
 fn split_registry_and_path(image_ref: &str) -> Result<(String, String)> {
+    let host = helpers::get_registry_address(image_ref).map_err(|err| {
+        ManifestUrlError::InvalidImageReference {
+            image_ref: image_ref.to_string(),
+            reason: err.to_string(),
+        }
+    })?;
+
     let (host, path) = if let Some((registry, remainder)) = image_ref.split_once('/') {
         if is_registry_component(registry) {
-            (normalize_registry_host(registry), remainder.to_string())
+            (host, remainder.to_string())
         } else {
-            ("index.docker.io".to_string(), image_ref.to_string())
+            (host, image_ref.to_string())
         }
     } else {
-        ("index.docker.io".to_string(), format!("library/{image_ref}"))
+        (host, format!("library/{image_ref}"))
     };
+
+    if path.is_empty() || path.starts_with('/') || path.ends_with('/') || path.contains("//") {
+        return Err(ManifestUrlError::InvalidImageReference {
+            image_ref: image_ref.to_string(),
+            reason: "invalid reference format".to_string(),
+        });
+    }
 
     let normalized_path = if host == "index.docker.io" {
         normalize_docker_hub_path(&path)
@@ -89,26 +113,11 @@ fn split_registry_and_path(image_ref: &str) -> Result<(String, String)> {
         path
     };
 
-    if normalized_path.is_empty() {
-        return Err(ManifestUrlError::InvalidImageRef {
-            image_ref: image_ref.to_string(),
-            reason: "repository path is missing".to_string(),
-        });
-    }
-
     Ok((host, normalized_path))
 }
 
 fn is_registry_component(component: &str) -> bool {
     component.contains('.') || component.contains(':') || component == "localhost"
-}
-
-fn normalize_registry_host(host: &str) -> String {
-    if host == "docker.io" {
-        "index.docker.io".to_string()
-    } else {
-        host.to_string()
-    }
 }
 
 fn normalize_docker_hub_path(path: &str) -> String {
@@ -174,14 +183,12 @@ mod tests {
     }
 
     #[test]
-    fn rejects_untagged_image_refs() {
-        let err = build_manifest_url("docker-registry.domain/imagename").unwrap_err();
+    fn rejects_pinned_image_refs() {
+        let err = build_manifest_url(
+            "docker-registry.domain/imagename@sha256:daf7034c5c89775afe3008393ae033529913548243b84926931d7c84398ecda7",
+        )
+        .expect_err("pinned images should be rejected");
 
-        assert_eq!(
-            err,
-            ManifestUrlError::UntaggedImageRef {
-                image_ref: "docker-registry.domain/imagename".to_string(),
-            }
-        );
+        assert!(matches!(err, ManifestUrlError::InvalidImageReference { .. }));
     }
 }

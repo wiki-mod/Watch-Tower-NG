@@ -12,6 +12,7 @@ use std::time::Duration;
 use crate::docker_client::{NetworkEndpoint, NetworkingConfig};
 use crate::types::{ContainerID, FilterableContainer, ImageID, RuntimeContainer, UpdateParams};
 use crate::{Error, Result};
+use tracing::warn;
 
 const WATCHTOWER_LABEL: &str = "com.centurylinklabs.watchtower";
 const SIGNAL_LABEL: &str = "com.centurylinklabs.watchtower.stop-signal";
@@ -28,8 +29,20 @@ const POST_UPDATE_LABEL: &str = "com.centurylinklabs.watchtower.lifecycle.post-u
 const PRE_UPDATE_TIMEOUT_LABEL: &str = "com.centurylinklabs.watchtower.lifecycle.pre-update-timeout";
 const POST_UPDATE_TIMEOUT_LABEL: &str = "com.centurylinklabs.watchtower.lifecycle.post-update-timeout";
 
-fn invalid_config(message: impl Into<String>) -> Error {
-    Error::InvalidConfig(message.into())
+fn error_no_image_info() -> Error {
+    Error::InvalidConfig("no available image info".to_string())
+}
+
+fn error_no_container_info() -> Error {
+    Error::InvalidConfig("no available container info".to_string())
+}
+
+fn error_invalid_config() -> Error {
+    Error::InvalidConfig("container configuration missing or invalid".to_string())
+}
+
+fn error_label_not_found() -> BoolLabelError {
+    BoolLabelError::NotFound
 }
 
 fn parse_bool_like_go(value: &str) -> Option<bool> {
@@ -40,14 +53,21 @@ fn parse_bool_like_go(value: &str) -> Option<bool> {
     }
 }
 
+pub fn contains_watchtower_label(labels: &BTreeMap<String, String>) -> bool {
+    labels.get(WATCHTOWER_LABEL).is_some_and(|value| value == "true")
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BoolLabelError {
+    NotFound,
+    Invalid,
+}
+
 fn duration_or_zero(duration: Duration) -> Duration {
     duration
 }
 
-fn clear_if_equal<T: PartialEq>(current: &mut T, default: &T)
-where
-    T: Default,
-{
+fn clear_if_equal<T: Default + PartialEq>(current: &mut T, default: &T) {
     if current == default {
         *current = T::default();
     }
@@ -213,8 +233,11 @@ impl Container {
         self.resolved_name = container_info
             .map(|info| info.name.clone())
             .unwrap_or_default();
-        self.resolved_image_id = container_info
-            .map(|info| info.image.clone())
+        self.resolved_image_id = self
+            .image_info
+            .as_ref()
+            .map(|info| info.id.clone())
+            .or_else(|| container_info.map(|info| info.image.clone()))
             .unwrap_or_else(|| ImageID::new(""));
         self.resolved_image_name = self.resolve_image_name();
         self.resolved_links = self.resolve_links();
@@ -298,15 +321,23 @@ impl Container {
         NetworkingConfig { endpoints: endpoints.into_iter().collect() }
     }
 
-    fn label_value<'a>(&'a self, label: &str) -> Option<&'a str> {
+    fn get_label_value_or_empty(&self, label: &str) -> &str {
+        self.get_label_value(label).unwrap_or("")
+    }
+
+    fn get_label_value<'a>(&'a self, label: &str) -> Option<&'a str> {
         self.container_info
             .as_ref()
             .and_then(|info| info.config.as_ref())
             .and_then(|config| config.labels.get(label).map(String::as_str))
     }
 
-    fn get_bool_label_value(&self, label: &str) -> Option<bool> {
-        self.label_value(label).and_then(parse_bool_like_go)
+    fn get_bool_label_value(&self, label: &str) -> std::result::Result<bool, BoolLabelError> {
+        let Some(value) = self.get_label_value(label) else {
+            return Err(error_label_not_found());
+        };
+
+        parse_bool_like_go(value).ok_or(BoolLabelError::Invalid)
     }
 
     fn subtract_runtime_overrides(config: &mut ContainerConfig, image_config: &ContainerConfig) {
@@ -353,16 +384,14 @@ impl Container {
         clear_if_equal(&mut current.start_period, &default.start_period);
     }
 
-    fn adjust_ports(config: &mut ContainerConfig, image_config: &ContainerConfig, container_info: &ContainerInspect) {
+    fn adjust_ports(config: &mut ContainerConfig, image_config: &ContainerConfig, host_config: &HostConfig) {
         if let Some(exposed_ports) = config.exposed_ports.as_mut() {
             if let Some(image_ports) = image_config.exposed_ports.as_ref() {
                 exposed_ports.retain(|port| !image_ports.contains(port));
             }
 
-            if let Some(host_config) = container_info.host_config.as_ref() {
-                for port in host_config.port_bindings.keys() {
-                    exposed_ports.insert(port.clone());
-                }
+            for port in host_config.port_bindings.keys() {
+                exposed_ports.insert(port.clone());
             }
         }
     }
@@ -448,7 +477,7 @@ impl Container {
 
     /// Return the enabled label as a parsed bool plus presence flag.
     pub fn enabled(&self) -> (bool, bool) {
-        let Some(raw) = self.label_value(ENABLE_LABEL) else {
+        let Some(raw) = self.get_label_value(ENABLE_LABEL) else {
             return (false, false);
         };
 
@@ -461,37 +490,40 @@ impl Container {
 
     /// Return the container scope if it exists.
     pub fn scope(&self) -> Option<&str> {
-        self.label_value(SCOPE_LABEL)
+        self.get_label_value(SCOPE_LABEL)
     }
 
     /// Return the custom stop signal, or an empty string.
     pub fn stop_signal(&self) -> String {
-        self.label_value(SIGNAL_LABEL).unwrap_or("").to_string()
+        self.get_label_value_or_empty(SIGNAL_LABEL).to_string()
     }
 
     /// Return whether this is the watchtower container itself.
     pub fn is_watchtower(&self) -> bool {
-        self.label_value(WATCHTOWER_LABEL) == Some("true")
+        self.container_info
+            .as_ref()
+            .and_then(|info| info.config.as_ref())
+            .is_some_and(|config| contains_watchtower_label(&config.labels))
     }
 
     /// Return the lifecycle pre-check command.
     pub fn get_lifecycle_pre_check_command(&self) -> String {
-        self.label_value(PRE_CHECK_LABEL).unwrap_or("").to_string()
+        self.get_label_value_or_empty(PRE_CHECK_LABEL).to_string()
     }
 
     /// Return the lifecycle post-check command.
     pub fn get_lifecycle_post_check_command(&self) -> String {
-        self.label_value(POST_CHECK_LABEL).unwrap_or("").to_string()
+        self.get_label_value_or_empty(POST_CHECK_LABEL).to_string()
     }
 
     /// Return the lifecycle pre-update command.
     pub fn get_lifecycle_pre_update_command(&self) -> String {
-        self.label_value(PRE_UPDATE_LABEL).unwrap_or("").to_string()
+        self.get_label_value_or_empty(PRE_UPDATE_LABEL).to_string()
     }
 
     /// Return the lifecycle post-update command.
     pub fn get_lifecycle_post_update_command(&self) -> String {
-        self.label_value(POST_UPDATE_LABEL).unwrap_or("").to_string()
+        self.get_label_value_or_empty(POST_UPDATE_LABEL).to_string()
     }
 
     /// Return whether a container update should only be monitored.
@@ -505,14 +537,19 @@ impl Container {
     }
 
     fn get_container_or_global_bool(&self, global_value: bool, label: &str, label_precedence: bool) -> bool {
-        let Some(container_value) = self.get_bool_label_value(label) else {
-            return global_value;
-        };
-
-        if label_precedence {
-            container_value
-        } else {
-            container_value || global_value
+        match self.get_bool_label_value(label) {
+            Ok(container_value) => {
+                if label_precedence {
+                    container_value
+                } else {
+                    container_value || global_value
+                }
+            }
+            Err(BoolLabelError::NotFound) => global_value,
+            Err(BoolLabelError::Invalid) => {
+                warn!(label, "Failed to parse label value");
+                global_value
+            }
         }
     }
 
@@ -523,13 +560,13 @@ impl Container {
 
     /// Return the pre-update timeout in minutes.
     pub fn pre_update_timeout(&self) -> i64 {
-        let value = self.label_value(PRE_UPDATE_TIMEOUT_LABEL).unwrap_or("");
+        let value = self.get_label_value_or_empty(PRE_UPDATE_TIMEOUT_LABEL);
         value.parse::<i64>().unwrap_or(1)
     }
 
     /// Return the post-update timeout in minutes.
     pub fn post_update_timeout(&self) -> i64 {
-        let value = self.label_value(POST_UPDATE_TIMEOUT_LABEL).unwrap_or("");
+        let value = self.get_label_value_or_empty(POST_UPDATE_TIMEOUT_LABEL);
         value.parse::<i64>().unwrap_or(1)
     }
 
@@ -554,75 +591,82 @@ impl Container {
     }
 
     /// Return a create config with runtime-only overrides removed.
-    pub fn get_create_config(&self) -> Result<ContainerConfig> {
-        let container_info = self
-            .container_info
-            .as_ref()
-            .ok_or_else(|| invalid_config("no available container info"))?;
-        let container_config = container_info
-            .config
-            .as_ref()
-            .ok_or_else(|| invalid_config("container configuration missing or invalid"))?;
-        let host_config = container_info
-            .host_config
-            .as_ref()
-            .ok_or_else(|| invalid_config("container configuration missing or invalid"))?;
-        let image_info = self
+    pub fn get_create_config(&mut self) -> Result<ContainerConfig> {
+        let image_name = self.image_name().to_string();
+        let image_config = self
             .image_info
             .as_ref()
-            .ok_or_else(|| invalid_config("no available image info"))?;
+            .ok_or_else(error_no_image_info)?
+            .config
+            .clone();
 
-        let mut config = container_config.clone();
-        let image_config = image_info.config.clone();
+        let host_config = self
+            .container_info
+            .as_ref()
+            .and_then(|info| info.host_config.as_ref())
+            .cloned()
+            .ok_or_else(error_invalid_config)?;
 
-        Self::clear_simple_fields(&mut config, &image_config, host_config);
-        Self::clear_entrypoint_cmd_if_default(&mut config, &image_config);
-        Self::clear_healthcheck_defaults(&mut config, &image_config);
-        Self::subtract_runtime_overrides(&mut config, &image_config);
-        Self::adjust_ports(&mut config, &image_config, container_info);
+        let container_info = self
+            .container_info
+            .as_mut()
+            .ok_or_else(error_no_container_info)?;
+        let container_config = container_info
+            .config
+            .as_mut()
+            .ok_or_else(error_invalid_config)?;
 
-        config.image = self.image_name().to_string();
+        Self::clear_simple_fields(container_config, &image_config, &host_config);
+        Self::clear_entrypoint_cmd_if_default(container_config, &image_config);
+        Self::clear_healthcheck_defaults(container_config, &image_config);
+        Self::subtract_runtime_overrides(container_config, &image_config);
+        Self::adjust_ports(container_config, &image_config, &host_config);
+        container_config.image = image_name;
+
+        let config = container_config.clone();
+        self.refresh_cache();
         Ok(config)
     }
 
     /// Return a create host config with links normalized for recreation.
-    pub fn get_create_host_config(&self) -> Result<HostConfig> {
+    pub fn get_create_host_config(&mut self) -> Result<HostConfig> {
         let container_info = self
             .container_info
-            .as_ref()
-            .ok_or_else(|| invalid_config("no available container info"))?;
+            .as_mut()
+            .ok_or_else(error_no_container_info)?;
         let host_config = container_info
             .host_config
-            .as_ref()
-            .ok_or_else(|| invalid_config("container configuration missing or invalid"))?;
+            .as_mut()
+            .ok_or_else(error_invalid_config)?;
 
-        let mut create_host_config = host_config.clone();
-        for link in &mut create_host_config.links {
+        for link in &mut host_config.links {
             *link = Self::normalize_link(link);
         }
 
-        Ok(create_host_config)
+        let host_config = host_config.clone();
+        self.refresh_cache();
+        Ok(host_config)
     }
 
     /// Check whether the container and image configuration are usable.
     pub fn verify_configuration(&mut self) -> Result<()> {
         if self.image_info.is_none() {
-            return Err(invalid_config("no available image info"));
+            return Err(error_no_image_info());
         }
 
         let container_info = self
             .container_info
             .as_mut()
-            .ok_or_else(|| invalid_config("no available container info"))?;
+            .ok_or_else(error_no_container_info)?;
 
         let container_config = container_info
             .config
             .as_mut()
-            .ok_or_else(|| invalid_config("container configuration missing or invalid"))?;
+            .ok_or_else(error_invalid_config)?;
         let host_config = container_info
             .host_config
             .as_mut()
-            .ok_or_else(|| invalid_config("container configuration missing or invalid"))?;
+            .ok_or_else(error_invalid_config)?;
 
         if !host_config.port_bindings.is_empty() && container_config.exposed_ports.is_none() {
             container_config.exposed_ports = Some(BTreeSet::new());
@@ -648,6 +692,29 @@ impl FilterableContainer for Container {
 
     fn scope(&self) -> Option<&str> {
         self.scope()
+    }
+
+    fn image_name(&self) -> &str {
+        self.image_name()
+    }
+}
+
+impl crate::filters::FilterableContainer for Container {
+    fn name(&self) -> &str {
+        self.name()
+    }
+
+    fn is_watchtower(&self) -> bool {
+        self.is_watchtower()
+    }
+
+    fn enabled(&self) -> (bool, bool) {
+        self.enabled()
+    }
+
+    fn scope(&self) -> (Option<&str>, bool) {
+        let scope = self.scope();
+        (scope, scope.is_some())
     }
 
     fn image_name(&self) -> &str {
@@ -878,7 +945,7 @@ mod tests {
 
     #[test]
     fn create_config_strips_default_and_runtime_overrides() {
-        let c = base_container();
+        let mut c = base_container();
         let config = c.get_create_config().expect("create config");
 
         assert_eq!(config.image, "image-name:latest");
@@ -907,7 +974,7 @@ mod tests {
 
     #[test]
     fn host_config_rewrites_links_for_recreation() {
-        let c = base_container();
+        let mut c = base_container();
         let host_config = c.get_create_host_config().expect("host config");
 
         assert_eq!(host_config.links, vec!["/redis:/test-containrrr".to_string()]);
@@ -941,7 +1008,7 @@ mod tests {
         missing_image.image_info = None;
         assert_eq!(
             missing_image.verify_configuration().expect_err("error"),
-            invalid_config("no available image info")
+            error_no_image_info()
         );
 
         let mut missing_container = base_container();
@@ -949,7 +1016,53 @@ mod tests {
         missing_container.refresh_cache();
         assert_eq!(
             missing_container.verify_configuration().expect_err("error"),
-            invalid_config("no available container info")
+            error_no_container_info()
         );
+    }
+
+    #[test]
+    fn image_id_prefers_image_inspect_id_when_available() {
+        let c = base_container();
+        assert_eq!(c.image_id(), &ImageID::from("sha256:image"));
+        assert_eq!(c.safe_image_id(), Some(&ImageID::from("sha256:image")));
+    }
+
+    #[test]
+    fn image_name_uses_zodiac_label_and_appends_latest_when_missing_tag() {
+        let c = Container::new(
+            ContainerInspect {
+                config: Some(ContainerConfig {
+                    image: "ignored".to_string(),
+                    labels: labels(&[(ZODIAC_LABEL, "the-original-image")]),
+                    ..ContainerConfig::default()
+                }),
+                created: "2024-06-18T12:00:00Z".to_string(),
+                ..ContainerInspect::default()
+            },
+            None,
+        );
+
+        assert_eq!(c.image_name(), "the-original-image:latest");
+    }
+
+    #[test]
+    fn invalid_bool_label_falls_back_to_global_value() {
+        let c = Container::new(
+            ContainerInspect {
+                config: Some(ContainerConfig {
+                    labels: labels(&[(MONITOR_ONLY_LABEL, "maybe")]),
+                    ..ContainerConfig::default()
+                }),
+                created: "2024-06-18T12:00:00Z".to_string(),
+                ..ContainerInspect::default()
+            },
+            None,
+        );
+        let params = UpdateParams {
+            monitor_only: true,
+            ..UpdateParams::default()
+        };
+
+        assert!(c.is_monitor_only(&params));
     }
 }

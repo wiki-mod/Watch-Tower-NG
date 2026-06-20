@@ -6,6 +6,8 @@ Current state:
 - Legacy source status: read-only
 - Migration workspace: not started yet
 - Release workspace: not started yet
+- Index-SoT is present and parseable.
+- Current open migration backlog: 61 `Nicht begonnen` entries, plus separate blocked and in-progress entries.
 
 What was verified:
 - `old-source/` contains a Go codebase with Docker, docs, tests, and release tooling.
@@ -19,7 +21,7 @@ Observed legacy cleanup spots:
 - Several cleanup-related code paths exist around container/image cleanup and multiple-instance checks.
 
 Immediate next steps:
-- Define the Rust workspace layout under `dev/work/`.
-- Keep issue sorting in `dev/triage/`.
+- Keep the open lanes as the active beauftragungs backlog.
+- Separate target-unclear lanes from directly assignable lanes before new agent fanout.
+- Keep blocked lanes isolated until their blocker class is resolved.
 - Record migration decisions and parity gaps in `dev/gov/`.
-- Create the release capture layout under `release/`.

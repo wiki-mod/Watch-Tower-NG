@@ -1,10 +1,6 @@
 #![forbid(unsafe_code)]
 
 //! Sorting helpers translated from the legacy Go sorter package.
-//!
-//! This module provides both dependency-aware topological sorting and the
-//! creation-time ordering used to detect and clean up duplicate watchtower
-//! instances.
 
 use std::cmp::Ordering;
 use std::collections::BTreeSet;
@@ -50,9 +46,6 @@ where
 }
 
 /// Sort containers by their creation timestamp, oldest first.
-///
-/// Invalid or missing timestamps are treated as the newest entries so they do
-/// not displace the known-good ordering.
 pub fn sort_by_created_at<C>(containers: &[C]) -> Vec<C>
 where
     C: RuntimeContainer + Clone,
@@ -62,21 +55,10 @@ where
     ordered
 }
 
-fn parse_created_at(created_at: &str) -> Option<OffsetDateTime> {
-    if created_at.is_empty() {
-        return None;
-    }
-
-    OffsetDateTime::parse(created_at, &Rfc3339).ok()
-}
-
 fn compare_created_at(left: &str, right: &str) -> Ordering {
-    match (parse_created_at(left), parse_created_at(right)) {
-        (Some(left), Some(right)) => left.cmp(&right),
-        (Some(_), None) => Ordering::Less,
-        (None, Some(_)) => Ordering::Greater,
-        (None, None) => left.cmp(right),
-    }
+    let left = OffsetDateTime::parse(left, &Rfc3339).unwrap_or_else(|_| OffsetDateTime::now_utc());
+    let right = OffsetDateTime::parse(right, &Rfc3339).unwrap_or(OffsetDateTime::UNIX_EPOCH);
+    left.cmp(&right)
 }
 
 struct DependencySorter<'a, C> {

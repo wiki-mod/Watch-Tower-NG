@@ -1,0 +1,43 @@
+#
+# Builder
+#
+
+FROM rust:1.85-alpine AS builder
+
+# use version (for example "v0.3.3") or "dev-rust-port"
+ARG WATCHTOWER_VERSION=dev-rust-port
+ARG RUN_TESTS=true
+
+# install build tools and certificates to keep the static build and TLS available
+RUN apk add --no-cache \
+    build-base \
+    ca-certificates \
+    git \
+    tzdata
+
+WORKDIR /watchtower
+
+RUN git clone --branch "${WATCHTOWER_VERSION}" https://github.com/wiki-mod/Watch-Tower-NG.git .
+
+WORKDIR /watchtower/dev/work/watchtower-rs
+
+RUN cargo build --locked --release && \
+    if [ "${RUN_TESTS}" = "true" ]; then cargo test --locked -v; fi
+
+
+#
+# watchtower
+#
+
+FROM scratch
+
+LABEL "com.centurylinklabs.watchtower"="true"
+
+# copy certificates and zoneinfo from builder to keep runtime TLS/timezone support available
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
+COPY --from=builder /watchtower/dev/work/watchtower-rs/target/release/watchtower-rs /watchtower
+
+HEALTHCHECK CMD [ "/watchtower", "--health-check"]
+
+ENTRYPOINT ["/watchtower"]

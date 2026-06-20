@@ -8,7 +8,7 @@
 
 use std::time::Duration;
 
-use crate::AppConfig;
+use crate::{filters, meta, AppConfig};
 
 /// Build the legacy startup message sequence for a resolved configuration.
 pub fn build_startup_messages(config: &AppConfig) -> Vec<String> {
@@ -17,7 +17,7 @@ pub fn build_startup_messages(config: &AppConfig) -> Vec<String> {
     }
 
     let mut lines = Vec::new();
-    lines.push(format!("Watchtower {}", env!("CARGO_PKG_VERSION")));
+    lines.push(format!("Watchtower {}", meta::version()));
 
     if config.notification_types.is_empty() {
         lines.push("Using no notifications".to_string());
@@ -28,7 +28,12 @@ pub fn build_startup_messages(config: &AppConfig) -> Vec<String> {
         ));
     }
 
-    lines.push(filtering_summary(config));
+    lines.push(filters::build_filter_description(
+        &config.containers,
+        &config.disable_containers,
+        config.label_enable,
+        config.scope.as_deref().unwrap_or(""),
+    ));
 
     match (&config.schedule, config.interval) {
         (Some(schedule), _) => {
@@ -66,15 +71,6 @@ pub fn build_startup_messages(config: &AppConfig) -> Vec<String> {
 pub fn emit_startup_messages(config: &AppConfig) {
     for line in build_startup_messages(config) {
         tracing::info!("{line}");
-    }
-}
-
-fn filtering_summary(config: &AppConfig) -> String {
-    match config.scope.as_deref() {
-        Some(scope) if !scope.trim().is_empty() => {
-            format!("Monitoring containers in scope {scope}.")
-        }
-        _ => "Monitoring all containers.".to_string(),
     }
 }
 
@@ -147,7 +143,7 @@ mod tests {
         let messages = build_startup_messages(&config());
 
         assert_eq!(messages[1], "Using notifications: email, slack");
-        assert_eq!(messages[2], "Monitoring containers in scope prod.");
+        assert_eq!(messages[2], "Only checking containers in scope \"prod\"");
         assert!(messages.iter().any(|message| message == "The HTTP API is enabled at :8080."));
     }
 }

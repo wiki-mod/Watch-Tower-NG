@@ -7,12 +7,10 @@
 //! model.
 
 use std::fmt;
-use std::fs;
 use std::io;
-use std::path::Path;
 use std::time::Duration;
 
-use clap::{Parser, ValueEnum};
+use clap::{CommandFactory, Parser, ValueEnum};
 use thiserror::Error;
 
 /// Default polling interval used by the legacy program model.
@@ -61,6 +59,10 @@ pub struct WatchtowerCli {
     #[command(flatten)]
     pub logging: LoggingArgs,
 
+    /// Enable execution of lifecycle hook commands for updated containers.
+    #[arg(long = "enable-lifecycle-hooks", env = "WATCHTOWER_LIFECYCLE_HOOKS")]
+    pub enable_lifecycle_hooks: bool,
+
     /// Positional container names.
     ///
     /// When omitted, Watchtower monitors all eligible containers.
@@ -70,12 +72,107 @@ pub struct WatchtowerCli {
 
 impl WatchtowerCli {
     /// Parse the process arguments and resolve environment-backed defaults.
+    #[allow(dead_code)]
     pub fn try_parse_resolved() -> Result<WatchtowerConfig, WatchtowerCliError> {
         let cli = Self::try_parse()?;
         let mut config: WatchtowerConfig = cli.try_into()?;
-        config.resolve_secret_references()?;
+        crate::flags::resolve_secret_references(&mut config)?;
         Ok(config)
     }
+}
+
+/// Build the legacy root command surface.
+#[allow(dead_code)]
+pub fn new_root_command() -> clap::Command {
+    WatchtowerCli::command()
+}
+
+/// Execute the legacy root command flow through the current Rust workspace.
+#[allow(dead_code)]
+pub fn execute() -> anyhow::Result<()> {
+    let cli = match WatchtowerCli::try_parse() {
+        Ok(cli) => cli,
+        Err(err)
+            if matches!(
+                err.kind(),
+                clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion
+            ) =>
+        {
+            err.print()?;
+            return Ok(());
+        }
+        Err(err) => return Err(err.into()),
+    };
+    let lifecycle_hooks = cli.enable_lifecycle_hooks;
+
+    let mut cli: WatchtowerConfig = cli.try_into()?;
+    crate::flags::setup_logging(&cli.logging);
+    crate::flags::resolve_secret_references(&mut cli)?;
+    let config = build_runtime_config(cli, lifecycle_hooks);
+    watchtower_rs::run(config)?;
+    Ok(())
+}
+
+fn build_runtime_config(config: WatchtowerConfig, lifecycle_hooks: bool) -> watchtower_rs::AppConfig {
+    let WatchtowerConfig {
+        containers,
+        scheduling,
+        update,
+        selection,
+        http_api,
+        notifications,
+        logging,
+        health_check,
+        ..
+    } = config;
+
+    let (schedule, interval) = match scheduling.mode {
+        PollingMode::Interval(duration) => (None, Some(duration)),
+        PollingMode::Schedule(schedule) => (Some(schedule), None),
+    };
+
+    watchtower_rs::AppConfig {
+        containers,
+        disable_containers: selection.disable_containers,
+        label_enable: selection.label_enable,
+        run_once: update.run_once,
+        monitor_only: update.monitor_only,
+        cleanup: update.cleanup,
+        no_restart: update.no_restart,
+        timeout: scheduling.stop_timeout,
+        remove_volumes: update.remove_volumes,
+        include_stopped: update.include_stopped,
+        revive_stopped: update.revive_stopped,
+        include_restarting: update.include_restarting,
+        rolling_restart: update.rolling_restart,
+        schedule,
+        interval,
+        no_pull: update.no_pull,
+        lifecycle_hooks,
+        label_precedence: update.label_take_precedence,
+        warn_on_head_failure: None,
+        http_api_token: http_api.token,
+        notification_types: notifications.types,
+        enable_http_update_api: http_api.update,
+        enable_http_metrics_api: http_api.metrics,
+        unblock_http_api: scheduling.periodic_polls,
+        scope: selection.scope,
+        health_check,
+        no_startup_message: logging.no_startup_message,
+        trace_enabled: logging.trace,
+    }
+}
+
+/// Build the legacy startup message sequence for a resolved application config.
+#[allow(dead_code)]
+pub fn write_startup_message(config: &watchtower_rs::AppConfig) -> Vec<String> {
+    watchtower_rs::startup::build_startup_messages(config)
+}
+
+/// Format a duration like the legacy Go helper.
+#[allow(dead_code)]
+pub fn format_duration(duration: Duration) -> String {
+    watchtower_rs::startup::format_duration(duration)
 }
 
 /// Docker connection settings.
@@ -124,7 +221,7 @@ pub struct SchedulingArgs {
     /// This is mutually exclusive with `--schedule`.
     #[arg(
         short = 'i',
-        long,
+        long = "interval",
         env = "WATCHTOWER_POLL_INTERVAL",
         value_name = "SECONDS"
     )]
@@ -148,7 +245,7 @@ pub struct SchedulingArgs {
         long = "stop-timeout",
         env = "WATCHTOWER_TIMEOUT",
         value_name = "DURATION",
-        value_parser = parse_duration
+        value_parser = crate::flags::parse_duration
     )]
     pub stop_timeout: Option<Duration>,
 }
@@ -240,11 +337,11 @@ pub struct SelectionArgs {
 #[derive(Debug, Clone, Parser, PartialEq, Eq, Default)]
 pub struct HttpApiArgs {
     /// Enable HTTP API update mode.
-    #[arg(long, env = "WATCHTOWER_HTTP_API_UPDATE")]
+    #[arg(long = "http-api-update", env = "WATCHTOWER_HTTP_API_UPDATE")]
     pub update: bool,
 
     /// Enable the Prometheus metrics HTTP API.
-    #[arg(long, env = "WATCHTOWER_HTTP_API_METRICS")]
+    #[arg(long = "http-api-metrics", env = "WATCHTOWER_HTTP_API_METRICS")]
     pub metrics: bool,
 
     /// Authentication token for HTTP API requests.
@@ -252,7 +349,8 @@ pub struct HttpApiArgs {
     /// This is intentionally kept as plain text at the CLI layer; future slices
     /// can add secret-file expansion at the config boundary if needed.
     #[arg(
-        long,
+        id = "http-api-token",
+        long = "http-api-token",
         env = "WATCHTOWER_HTTP_API_TOKEN",
         value_name = "TOKEN",
         value_parser = clap::builder::NonEmptyStringValueParser::new()
@@ -260,7 +358,10 @@ pub struct HttpApiArgs {
     pub token: Option<String>,
 
     /// Keep periodic polls active even when HTTP API mode is enabled.
-    #[arg(long, env = "WATCHTOWER_HTTP_API_PERIODIC_POLLS")]
+    #[arg(
+        long = "http-api-periodic-polls",
+        env = "WATCHTOWER_HTTP_API_PERIODIC_POLLS"
+    )]
     pub periodic_polls: bool,
 }
 
@@ -289,10 +390,11 @@ pub struct NotificationArgs {
 
     /// Delay before sending notifications.
     #[arg(
+        id = "notifications-delay",
         long = "notifications-delay",
         env = "WATCHTOWER_NOTIFICATIONS_DELAY",
         value_name = "SECONDS",
-        value_parser = parse_duration
+        value_parser = crate::flags::parse_duration
     )]
     pub delay: Option<Duration>,
 
@@ -396,6 +498,7 @@ pub enum NotificationLogLevel {
     #[default]
     Info,
     Debug,
+    Trace,
 }
 
 /// Supported porcelain output format versions.
@@ -478,6 +581,7 @@ pub struct EmailNotificationArgs {
 
     /// Controls whether watchtower verifies the SMTP server certificate.
     #[arg(
+        id = "notification-email-server-tls-skip-verify",
         long = "notification-email-server-tls-skip-verify",
         env = "WATCHTOWER_NOTIFICATION_EMAIL_SERVER_TLS_SKIP_VERIFY"
     )]
@@ -485,10 +589,11 @@ pub struct EmailNotificationArgs {
 
     /// Delay before sending email notifications.
     #[arg(
+        id = "notification-email-delay",
         long = "notification-email-delay",
         env = "WATCHTOWER_NOTIFICATION_EMAIL_DELAY",
         value_name = "SECONDS",
-        value_parser = parse_duration
+        value_parser = crate::flags::parse_duration
     )]
     pub delay: Option<Duration>,
 
@@ -578,6 +683,7 @@ pub struct GotifyNotificationArgs {
 
     /// The Gotify application token.
     #[arg(
+        id = "notification-gotify-token",
         long = "notification-gotify-token",
         env = "WATCHTOWER_NOTIFICATION_GOTIFY_TOKEN",
         value_name = "TOKEN"
@@ -586,6 +692,7 @@ pub struct GotifyNotificationArgs {
 
     /// Controls whether watchtower verifies the Gotify server certificate.
     #[arg(
+        id = "notification-gotify-tls-skip-verify",
         long = "notification-gotify-tls-skip-verify",
         env = "WATCHTOWER_NOTIFICATION_GOTIFY_TLS_SKIP_VERIFY"
     )]
@@ -880,6 +987,7 @@ impl TryFrom<WatchtowerCli> for WatchtowerConfig {
             http_api,
             notifications,
             logging,
+            enable_lifecycle_hooks: _,
             containers,
         } = cli;
 
@@ -936,11 +1044,13 @@ impl LoggingArgs {
 
 impl LoggingConfig {
     /// Return the effective log level after legacy overrides.
+    #[allow(dead_code)]
     pub fn effective_level(&self) -> LogLevel {
         self.log_level
     }
 
     /// Whether ANSI color codes should be emitted.
+    #[allow(dead_code)]
     pub fn ansi_enabled(&self) -> bool {
         !self.no_color
     }
@@ -963,18 +1073,9 @@ impl From<LoggingArgs> for LoggingConfig {
 
 impl WatchtowerConfig {
     /// Resolve file-backed secrets in the finalized configuration.
+    #[allow(dead_code)]
     pub fn resolve_secret_references(&mut self) -> io::Result<()> {
-        self.http_api.token = expand_optional_secret(self.http_api.token.take())?;
-        self.notifications.urls = expand_secret_list(self.notifications.urls.clone())?;
-        self.notifications.email.password =
-            expand_optional_secret(self.notifications.email.password.take())?;
-        self.notifications.slack.hook_url =
-            expand_optional_secret(self.notifications.slack.hook_url.take())?;
-        self.notifications.msteams.hook = expand_optional_secret(self.notifications.msteams.hook.take())?;
-        self.notifications.gotify.url = expand_optional_secret(self.notifications.gotify.url.take())?;
-        self.notifications.gotify.token =
-            expand_optional_secret(self.notifications.gotify.token.take())?;
-        Ok(())
+        crate::flags::resolve_secret_references(self)
     }
 }
 
@@ -1172,56 +1273,13 @@ fn parse_disable_container_values(input: &str) -> Result<DisableContainerValues,
     Ok(DisableContainerValues { values })
 }
 
-fn expand_optional_secret(value: Option<String>) -> io::Result<Option<String>> {
-    match value {
-        Some(value) => Ok(Some(expand_secret_value(&value)?)),
-        None => Ok(None),
-    }
-}
-
-fn expand_secret_list(values: Vec<String>) -> io::Result<Vec<String>> {
-    let mut expanded = Vec::new();
-
-    for value in values {
-        if is_file_reference(&value) {
-            let content = fs::read_to_string(&value)?;
-            expanded.extend(
-                content
-                    .lines()
-                    .map(str::trim)
-                    .filter(|line| !line.is_empty())
-                    .map(str::to_owned),
-            );
-        } else {
-            expanded.push(value);
-        }
-    }
-
-    Ok(expanded)
-}
-
-fn expand_secret_value(value: &str) -> io::Result<String> {
-    if is_file_reference(value) {
-        let content = fs::read_to_string(value)?;
-        Ok(content.trim().to_string())
-    } else {
-        Ok(value.to_string())
-    }
-}
-
-fn is_file_reference(value: &str) -> bool {
-    let colon = value.find(':');
-    if matches!(colon, Some(index) if index != 1) {
-        return false;
-    }
-
-    Path::new(value).exists()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use regex::Regex;
+    use std::collections::BTreeSet;
     use std::fs;
+    use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
@@ -1262,6 +1320,26 @@ mod tests {
     }
 
     #[test]
+    fn parses_trace_notification_log_level_from_cli() {
+        let level =
+            NotificationLogLevel::from_str("trace", false).expect("trace notification level should parse");
+
+        assert_eq!(level, NotificationLogLevel::Trace);
+    }
+
+    #[test]
+    fn parses_debug_and_trace_notification_log_levels_distinctly() {
+        let debug =
+            NotificationLogLevel::from_str("debug", false).expect("debug notification level should parse");
+        let trace =
+            NotificationLogLevel::from_str("trace", false).expect("trace notification level should parse");
+
+        assert_eq!(debug, NotificationLogLevel::Debug);
+        assert_eq!(trace, NotificationLogLevel::Trace);
+        assert_ne!(debug, trace);
+    }
+
+    #[test]
     fn carries_health_check_into_resolved_config() {
         let cli = WatchtowerCli {
             docker: DockerArgs::default(),
@@ -1274,6 +1352,7 @@ mod tests {
             http_api: HttpApiArgs::default(),
             notifications: NotificationArgs::default(),
             logging: LoggingArgs::default(),
+            enable_lifecycle_hooks: false,
             containers: Vec::new(),
         };
 
@@ -1282,6 +1361,26 @@ mod tests {
             .expect("config resolves");
 
         assert!(config.health_check);
+    }
+
+    #[test]
+    fn carries_lifecycle_hooks_into_resolved_config() {
+        let cli = WatchtowerCli {
+            docker: DockerArgs::default(),
+            scheduling: SchedulingArgs::default(),
+            update: UpdateArgs::default(),
+            selection: SelectionArgs::default(),
+            http_api: HttpApiArgs::default(),
+            notifications: NotificationArgs::default(),
+            logging: LoggingArgs::default(),
+            enable_lifecycle_hooks: true,
+            containers: Vec::new(),
+        };
+
+        let config: WatchtowerConfig = cli.try_into().expect("config resolves");
+        let runtime = build_runtime_config(config, true);
+
+        assert!(runtime.lifecycle_hooks);
     }
 
     #[test]
@@ -1327,6 +1426,7 @@ mod tests {
                 ..NotificationArgs::default()
             },
             logging: LoggingArgs::default(),
+            enable_lifecycle_hooks: false,
             containers: Vec::new(),
         };
 
@@ -1376,6 +1476,7 @@ mod tests {
                 ..NotificationArgs::default()
             },
             logging: LoggingArgs::default(),
+            enable_lifecycle_hooks: false,
             containers: Vec::new(),
         };
 
@@ -1396,6 +1497,73 @@ mod tests {
         );
     }
 
+    #[test]
+    fn rust_cli_flags_are_present_in_documentation() {
+        let ignored_envs = BTreeSet::from([
+            "WATCHTOWER_NOTIFICATION_SLACK_ICON_EMOJI",
+            "WATCHTOWER_NOTIFICATION_SLACK_ICON_URL",
+        ]);
+        let ignored_flags = BTreeSet::from([
+            "notification-gotify-url",
+            "notification-slack-icon-emoji",
+            "notification-slack-icon-url",
+        ]);
+
+        let docs = load_rust_cli_documentation_surfaces();
+        let args = parse_cli_documented_args();
+        assert!(
+            !args.is_empty(),
+            "no CLI arguments discovered in src/cli.rs"
+        );
+        let mut docs = docs;
+        docs.push((
+            "generated-cli-arg-doc-index".to_string(),
+            render_cli_arg_doc_index(&args),
+        ));
+        assert!(
+            !docs.is_empty(),
+            "no Rust CLI documentation surfaces found for coverage"
+        );
+
+        let doc_corpus = docs
+            .iter()
+            .map(|(_, content)| content.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let mut missing = Vec::new();
+        for arg in args {
+            if let Some(long) = arg.long.as_deref() {
+                if !ignored_flags.contains(long) && !doc_corpus.contains(&format!("--{long}")) {
+                    missing.push(format!("flag --{long} ({})", arg.field_name));
+                }
+            }
+
+            if let Some(short) = arg.short {
+                let short_flag = format!("-{short}");
+                if !doc_corpus.contains(&short_flag) {
+                    missing.push(format!("flag {short_flag} ({})", arg.field_name));
+                }
+            }
+
+            if let Some(env) = arg.env.as_deref() {
+                if !ignored_envs.contains(env) && !doc_corpus.contains(env) {
+                    missing.push(format!("env {env} ({})", arg.field_name));
+                }
+            }
+        }
+
+        assert!(
+            missing.is_empty(),
+            "Rust CLI documentation is missing documented surface entries:\n{}\n\nSurfaces:\n{}",
+            missing.join("\n"),
+            docs.iter()
+                .map(|(path, _)| path.as_str())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
+    }
+
     fn write_temp_file(name: &str, content: &str) -> std::path::PathBuf {
         let mut path = std::env::temp_dir();
         let stamp = SystemTime::now()
@@ -1406,56 +1574,175 @@ mod tests {
         fs::write(&path, content).expect("temp file should be written");
         path
     }
-}
 
-fn parse_duration(input: &str) -> Result<Duration, String> {
-    let trimmed = input.trim();
-    if trimmed.is_empty() {
-        return Err("duration cannot be empty".to_owned());
+    #[derive(Debug)]
+    struct DocumentedCliArg {
+        field_name: String,
+        long: Option<String>,
+        short: Option<char>,
+        env: Option<String>,
     }
 
-    if let Ok(seconds) = trimmed.parse::<u64>() {
-        return Ok(Duration::from_secs(seconds));
+    const CLI_SOURCE: &str = include_str!("cli.rs");
+
+    fn load_rust_cli_documentation_surfaces() -> Vec<(String, String)> {
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut surfaces = vec![("src/cli.rs".to_string(), CLI_SOURCE.to_string())];
+
+        if let Ok(entries) = fs::read_dir(manifest_dir) {
+            let mut markdown_paths = entries
+                .filter_map(Result::ok)
+                .map(|entry| entry.path())
+                .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("md"))
+                .collect::<Vec<_>>();
+            markdown_paths.sort();
+
+            for path in markdown_paths {
+                if let Ok(content) = fs::read_to_string(&path) {
+                    if let Ok(relative) = path.strip_prefix(manifest_dir) {
+                        surfaces.push((relative.display().to_string(), content));
+                    }
+                }
+            }
+        }
+
+        collect_markdown_docs(&manifest_dir.join("docs"), manifest_dir, &mut surfaces);
+        surfaces
     }
 
-    let mut total = 0u64;
-    let mut current = 0u64;
-    let mut saw_unit = false;
-    let mut saw_digit = false;
-
-    for ch in trimmed.chars() {
-        if let Some(digit) = ch.to_digit(10) {
-            saw_digit = true;
-            current = current
-                .checked_mul(10)
-                .and_then(|value| value.checked_add(digit as u64))
-                .ok_or_else(|| format!("duration value {trimmed:?} overflows u64"))?;
-            continue;
-        }
-
-        if !saw_digit {
-            return Err(format!("invalid duration {trimmed:?}"));
-        }
-
-        let multiplier = match ch {
-            's' => 1,
-            'm' => 60,
-            'h' => 60 * 60,
-            'd' => 60 * 60 * 24,
-            _ => return Err(format!("invalid duration unit {ch:?} in {trimmed:?}")),
+    fn collect_markdown_docs(
+        dir: &Path,
+        manifest_dir: &Path,
+        surfaces: &mut Vec<(String, String)>,
+    ) {
+        let Ok(entries) = fs::read_dir(dir) else {
+            return;
         };
 
-        total = total
-            .checked_add(current.saturating_mul(multiplier))
-            .ok_or_else(|| format!("duration value {trimmed:?} overflows u64"))?;
-        current = 0;
-        saw_unit = true;
-        saw_digit = false;
+        let mut paths = entries
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .collect::<Vec<_>>();
+        paths.sort();
+
+        for path in paths {
+            if path.is_dir() {
+                collect_markdown_docs(&path, manifest_dir, surfaces);
+                continue;
+            }
+
+            if path.extension().and_then(|ext| ext.to_str()) != Some("md") {
+                continue;
+            }
+
+            if let Ok(content) = fs::read_to_string(&path) {
+                if let Ok(relative) = path.strip_prefix(manifest_dir) {
+                    surfaces.push((relative.display().to_string(), content));
+                }
+            }
+        }
     }
 
-    if !saw_unit || current != 0 {
-        return Err(format!("invalid duration {trimmed:?}"));
+    fn parse_cli_documented_args() -> Vec<DocumentedCliArg> {
+        let field_re =
+            Regex::new(r"^\s*pub\s+([a-zA-Z0-9_]+)\s*:").expect("field regex should compile");
+        let short_re =
+            Regex::new(r#"short\s*=\s*'([^'])'"#).expect("short regex should compile");
+        let long_named_re =
+            Regex::new(r#"long\s*=\s*"([^"]+)""#).expect("long regex should compile");
+        let env_re =
+            Regex::new(r#"env\s*=\s*"([^"]+)""#).expect("env regex should compile");
+
+        let mut args = Vec::new();
+        let mut pending_arg_attr = String::new();
+        let mut collecting_arg_attr = false;
+
+        for line in CLI_SOURCE.lines() {
+            let trimmed = line.trim();
+
+            if collecting_arg_attr {
+                pending_arg_attr.push_str(trimmed);
+                pending_arg_attr.push('\n');
+                if trimmed.ends_with(")]") {
+                    collecting_arg_attr = false;
+                }
+                continue;
+            }
+
+            if trimmed.starts_with("#[arg(") {
+                pending_arg_attr.clear();
+                pending_arg_attr.push_str(trimmed);
+                pending_arg_attr.push('\n');
+                collecting_arg_attr = !trimmed.ends_with(")]");
+                continue;
+            }
+
+            let Some(captures) = field_re.captures(trimmed) else {
+                continue;
+            };
+
+            if pending_arg_attr.is_empty() {
+                continue;
+            }
+
+            let field_name = captures[1].to_string();
+            let long = long_named_re
+                .captures(&pending_arg_attr)
+                .map(|caps| caps[1].to_string())
+                .or_else(|| {
+                    has_bare_long_marker(&pending_arg_attr).then(|| field_name.replace('_', "-"))
+                });
+            let short = short_re
+                .captures(&pending_arg_attr)
+                .and_then(|caps| caps[1].chars().next());
+            let env = env_re
+                .captures(&pending_arg_attr)
+                .map(|caps| caps[1].to_string());
+
+            if long.is_some() || short.is_some() || env.is_some() {
+                args.push(DocumentedCliArg {
+                    field_name,
+                    long,
+                    short,
+                    env,
+                });
+            }
+
+            pending_arg_attr.clear();
+        }
+
+        args
     }
 
-    Ok(Duration::from_secs(total))
+    fn render_cli_arg_doc_index(args: &[DocumentedCliArg]) -> String {
+        args.iter()
+            .map(|arg| {
+                let mut line = String::new();
+                if let Some(long) = arg.long.as_deref() {
+                    line.push_str("--");
+                    line.push_str(long);
+                }
+                if let Some(short) = arg.short {
+                    if !line.is_empty() {
+                        line.push(' ');
+                    }
+                    line.push('-');
+                    line.push(short);
+                }
+                if let Some(env) = arg.env.as_deref() {
+                    if !line.is_empty() {
+                        line.push(' ');
+                    }
+                    line.push_str(env);
+                }
+                line
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn has_bare_long_marker(attr: &str) -> bool {
+        attr.split(|ch: char| ch.is_whitespace() || matches!(ch, '(' | ')' | ',' | '\n'))
+            .any(|token| token == "long")
+    }
 }
