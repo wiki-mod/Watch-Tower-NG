@@ -6,9 +6,10 @@
 //! The module keeps the data model small and explicit so the container-specific
 //! logic can be exercised without wiring in Docker HTTP clients yet.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::time::Duration;
 
+use crate::docker_client::{NetworkEndpoint, NetworkingConfig};
 use crate::types::{ContainerID, FilterableContainer, ImageID, RuntimeContainer, UpdateParams};
 use crate::{Error, Result};
 
@@ -144,6 +145,7 @@ pub struct ContainerInspect {
     pub state: ContainerState,
     pub config: Option<ContainerConfig>,
     pub host_config: Option<HostConfig>,
+    pub network_settings: Option<HashMap<String, NetworkEndpoint>>,
 }
 
 impl Default for ImageInspect {
@@ -164,6 +166,7 @@ impl Default for ContainerInspect {
             state: ContainerState::default(),
             config: None,
             host_config: None,
+            network_settings: None,
         }
     }
 }
@@ -275,6 +278,22 @@ impl Container {
         }
 
         links
+    }
+
+    fn build_network_config(&self) -> NetworkingConfig {
+        let mut endpoints = self
+            .container_info
+            .as_ref()
+            .and_then(|info| info.network_settings.as_ref())
+            .cloned()
+            .unwrap_or_default();
+
+        let container_id_short = self.id().short_id();
+        for endpoint in endpoints.values_mut() {
+            endpoint.aliases.retain(|alias| alias != &container_id_short);
+        }
+
+        NetworkingConfig { endpoints: endpoints.into_iter().collect() }
     }
 
     fn label_value<'a>(&'a self, label: &str) -> Option<&'a str> {
@@ -393,6 +412,11 @@ impl Container {
     /// Return the resolved link list.
     pub fn links(&self) -> &[String] {
         self.resolved_links.as_slice()
+    }
+
+    /// Return the network configuration used when recreating the container.
+    pub fn get_network_config(&self) -> NetworkingConfig {
+        self.build_network_config()
     }
 
     /// Return whether the container is running.
@@ -711,6 +735,16 @@ mod tests {
                 ]),
                 auto_remove: false,
             }),
+            network_settings: Some(HashMap::from([(
+                "bridge".to_string(),
+                NetworkEndpoint {
+                    aliases: vec![
+                        "container_id".to_string(),
+                        "db".to_string(),
+                        "redis".to_string(),
+                    ],
+                },
+            )])),
         };
 
         let image_info = ImageInspect {
@@ -778,6 +812,18 @@ mod tests {
         assert_eq!(
             container_depends_on.links(),
             &["/postgres".to_string(), "/redis".to_string()]
+        );
+    }
+
+    #[test]
+    fn get_network_config_strips_the_container_id_alias() {
+        let c = base_container();
+        let network_config = c.get_network_config();
+
+        let endpoint = network_config.endpoints.get("bridge").expect("bridge endpoint");
+        assert_eq!(
+            endpoint.aliases,
+            vec!["db".to_string(), "redis".to_string()]
         );
     }
 

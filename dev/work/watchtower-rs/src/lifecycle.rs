@@ -308,6 +308,7 @@ mod tests {
                     ..ContainerConfig::default()
                 }),
                 host_config: None,
+                network_settings: None,
             },
             None,
         )
