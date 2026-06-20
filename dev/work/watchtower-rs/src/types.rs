@@ -114,6 +114,7 @@ pub trait RuntimeContainer {
     fn id(&self) -> &ContainerID;
     fn name(&self) -> &str;
     fn links(&self) -> &[String];
+    fn image_id(&self) -> &ImageID;
     fn is_watchtower(&self) -> bool;
     fn is_stale(&self) -> bool;
     fn set_stale(&mut self, value: bool);
@@ -261,6 +262,7 @@ mod tests {
         id: ContainerID,
         name: String,
         links: Vec<String>,
+        image_id: ImageID,
         watchtower: bool,
         stale: bool,
         linked_to_restarting: bool,
@@ -305,6 +307,10 @@ mod tests {
             &self.links
         }
 
+        fn image_id(&self) -> &ImageID {
+            &self.image_id
+        }
+
         fn is_watchtower(&self) -> bool {
             self.watchtower
         }
@@ -347,6 +353,7 @@ mod tests {
             id: ContainerID::from("abc123"),
             name: "watchtower".to_string(),
             links: vec![],
+            image_id: ImageID::from("sha256:image-a"),
             watchtower: false,
             stale: false,
             linked_to_restarting: false,
@@ -368,6 +375,7 @@ mod tests {
             id: ContainerID::from("abc123"),
             name: "app".to_string(),
             links: vec!["/db".to_string()],
+            image_id: ImageID::from("sha256:image-b"),
             watchtower: false,
             stale: false,
             linked_to_restarting: false,

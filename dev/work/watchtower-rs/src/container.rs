@@ -658,6 +658,10 @@ impl RuntimeContainer for Container {
         self.links()
     }
 
+    fn image_id(&self) -> &ImageID {
+        self.image_id()
+    }
+
     fn is_watchtower(&self) -> bool {
         self.is_watchtower()
     }

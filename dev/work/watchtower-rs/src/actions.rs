@@ -88,6 +88,25 @@ pub fn dedupe_cleanup_image_ids(image_ids: impl IntoIterator<Item = ImageID>) ->
     unique
 }
 
+/// Drop cleanup candidates that are still referenced by a live container.
+///
+/// This protects against the cleanup bug where a shared image could be removed
+/// even though another container still depended on it.
+pub fn retain_unused_cleanup_image_ids<C: RuntimeContainer>(
+    containers: &[C],
+    image_ids: impl IntoIterator<Item = ImageID>,
+) -> Vec<ImageID> {
+    let in_use: HashSet<String> = containers
+        .iter()
+        .map(|container| container.image_id().as_str().to_string())
+        .collect();
+
+    dedupe_cleanup_image_ids(image_ids)
+        .into_iter()
+        .filter(|image_id| !in_use.contains(image_id.as_str()))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -97,6 +116,7 @@ mod tests {
         id: ContainerID,
         name: String,
         links: Vec<String>,
+        image_id: ImageID,
         stale: bool,
         linked_to_restarting: bool,
         monitor_only: bool,
@@ -113,6 +133,10 @@ mod tests {
 
         fn links(&self) -> &[String] {
             &self.links
+        }
+
+        fn image_id(&self) -> &ImageID {
+            &self.image_id
         }
 
         fn is_watchtower(&self) -> bool {
@@ -140,11 +164,12 @@ mod tests {
         }
     }
 
-    fn container(id: &str, name: &str, links: &[&str]) -> MockContainer {
+    fn container(id: &str, name: &str, links: &[&str], image_id: &str) -> MockContainer {
         MockContainer {
             id: ContainerID::from(id),
             name: name.to_string(),
             links: links.iter().map(|link| (*link).to_string()).collect(),
+            image_id: ImageID::from(image_id),
             stale: false,
             linked_to_restarting: false,
             monitor_only: false,
@@ -153,7 +178,7 @@ mod tests {
 
     #[test]
     fn sanity_check_rejects_linked_containers_with_rolling_restart() {
-        let containers = vec![container("a", "/alpha", &["/beta"])];
+        let containers = vec![container("a", "/alpha", &["/beta"], "sha256:a")];
 
         let err = check_for_sanity(&containers, true).expect_err("should reject");
 
@@ -164,9 +189,9 @@ mod tests {
     #[test]
     fn implicit_restart_marks_linked_dependents() {
         let mut containers = vec![
-            container("a", "/alpha", &[]),
-            container("b", "/beta", &["/alpha"]),
-            container("c", "/gamma", &["/beta"]),
+            container("a", "/alpha", &[], "sha256:a"),
+            container("b", "/beta", &["/alpha"], "sha256:b"),
+            container("c", "/gamma", &["/beta"], "sha256:c"),
         ];
         containers[0].stale = true;
 
@@ -179,8 +204,8 @@ mod tests {
     #[test]
     fn select_containers_to_update_skips_monitor_only_entries() {
         let mut containers = vec![
-            container("a", "/alpha", &[]),
-            container("b", "/beta", &[]),
+            container("a", "/alpha", &[], "sha256:a"),
+            container("b", "/beta", &[], "sha256:b"),
         ];
         containers[1].monitor_only = true;
 
@@ -205,6 +230,26 @@ mod tests {
                 ImageID::from("sha256:deadbeef"),
                 ImageID::from("sha256:beadfeed"),
             ]
+        );
+    }
+
+    #[test]
+    fn retain_unused_cleanup_image_ids_skips_images_still_used_by_other_containers() {
+        let containers = vec![
+            container("a", "/alpha", &[], "sha256:shared"),
+            container("b", "/beta", &[], "sha256:fresh"),
+        ];
+
+        let candidate_ids = vec![
+            ImageID::from("sha256:stale-old"),
+            ImageID::from("sha256:shared"),
+            ImageID::from("sha256:stale-old"),
+            ImageID::from(""),
+        ];
+
+        assert_eq!(
+            retain_unused_cleanup_image_ids(&containers, candidate_ids),
+            vec![ImageID::from("sha256:stale-old")]
         );
     }
 }
