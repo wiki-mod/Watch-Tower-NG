@@ -8,6 +8,7 @@
 
 use crate::types::FilterableContainer;
 
+use super::digest::DigestError;
 use super::credentials;
 use super::trust;
 
@@ -21,6 +22,23 @@ pub struct PullOptions {
     pub registry_auth: String,
     /// Handler used when the registry rejects the first authenticated request.
     pub privilege_func: Option<AuthHandler>,
+}
+
+/// Outcome of the legacy pull decision path.
+///
+/// The Go runtime first checks whether a digest comparison succeeded, then
+/// either skips the pull, proceeds with a pull, or falls back to a regular
+/// pull after a HEAD request failure.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PullDecision {
+    /// The remote and local digests matched, so no pull is needed.
+    SkipPull,
+    /// The digests differ, so the image should be pulled.
+    Pull,
+    /// The digest check failed and the runtime should fall back to a regular
+    /// pull. The boolean records whether the failure should be logged as a
+    /// warning.
+    HeadCheckFailed { warn: bool, reason: String },
 }
 
 /// Return the pull options for an image reference.
@@ -49,6 +67,21 @@ pub fn get_pull_options(image_name: &str) -> credentials::Result<PullOptions> {
 pub fn default_auth_handler() -> String {
     tracing::debug!("Authentication request was rejected. Trying again without authentication");
     String::new()
+}
+
+/// Translate the legacy Go `PullImage` digest outcome into a pull decision.
+pub fn decide_pull_action(
+    digest_check: std::result::Result<bool, DigestError>,
+    warn_on_head_failure: bool,
+) -> PullDecision {
+    match digest_check {
+        Ok(true) => PullDecision::SkipPull,
+        Ok(false) => PullDecision::Pull,
+        Err(err) => PullDecision::HeadCheckFailed {
+            warn: warn_on_head_failure,
+            reason: err.to_string(),
+        },
+    }
 }
 
 /// Return whether the registry is expected to warrant an API-consumption warning.
@@ -113,6 +146,36 @@ mod tests {
     #[test]
     fn default_auth_handler_returns_an_empty_retry_header() {
         assert_eq!(default_auth_handler(), "");
+    }
+
+    #[test]
+    fn decides_to_skip_when_digests_match() {
+        assert_eq!(
+            decide_pull_action(Ok(true), false),
+            PullDecision::SkipPull
+        );
+    }
+
+    #[test]
+    fn decides_to_pull_when_digests_differ() {
+        assert_eq!(
+            decide_pull_action(Ok(false), false),
+            PullDecision::Pull
+        );
+    }
+
+    #[test]
+    fn decides_to_fall_back_when_head_check_fails() {
+        assert_eq!(
+            decide_pull_action(
+                Err(DigestError::RequestFailed("dial tcp: lookup registry".to_string())),
+                true
+            ),
+            PullDecision::HeadCheckFailed {
+                warn: true,
+                reason: "registry request failed: dial tcp: lookup registry".to_string()
+            }
+        );
     }
 
     #[test]
