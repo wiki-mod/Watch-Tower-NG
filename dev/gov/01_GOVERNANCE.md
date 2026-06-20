@@ -7,6 +7,7 @@ Scope:
 
 Hard rules:
 - Warnings are errors.
+- Warnings must not be silently ignored.
 - Do not change `old-source/` unless a task explicitly says so.
 - Fanout is mandatory.
 - Prefer one file, one agent, one translation slice.
