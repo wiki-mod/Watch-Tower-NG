@@ -7,6 +7,8 @@
 //! state.
 
 use crate::types::{ContainerID, RuntimeContainer, UpdateParams};
+use crate::types::ImageID;
+use std::collections::HashSet;
 
 /// Fail when rolling restarts are requested on dependency-linked containers.
 pub fn check_for_sanity<C: RuntimeContainer>(containers: &[C], rolling_restarts: bool) -> Result<(), String> {
@@ -62,6 +64,28 @@ pub fn select_containers_to_update<C: RuntimeContainer>(
     }
 
     selected
+}
+
+/// Normalize cleanup image IDs before removal.
+///
+/// The legacy Go cleanup path used a set-like map, which naturally skipped
+/// duplicates and ignored empty IDs. This helper preserves that behavior for
+/// later cleanup orchestration slices.
+pub fn dedupe_cleanup_image_ids(image_ids: impl IntoIterator<Item = ImageID>) -> Vec<ImageID> {
+    let mut seen = HashSet::new();
+    let mut unique = Vec::new();
+
+    for image_id in image_ids {
+        if image_id.as_str().is_empty() {
+            continue;
+        }
+
+        if seen.insert(image_id.as_str().to_string()) {
+            unique.push(image_id);
+        }
+    }
+
+    unique
 }
 
 #[cfg(test)]
@@ -164,5 +188,23 @@ mod tests {
         let selected = select_containers_to_update(&mut containers, &params);
 
         assert_eq!(selected, vec![ContainerID::from("a")]);
+    }
+
+    #[test]
+    fn dedupe_cleanup_image_ids_skips_empty_and_duplicate_entries() {
+        let image_ids = vec![
+            ImageID::from(""),
+            ImageID::from("sha256:deadbeef"),
+            ImageID::from("sha256:deadbeef"),
+            ImageID::from("sha256:beadfeed"),
+        ];
+
+        assert_eq!(
+            dedupe_cleanup_image_ids(image_ids),
+            vec![
+                ImageID::from("sha256:deadbeef"),
+                ImageID::from("sha256:beadfeed"),
+            ]
+        );
     }
 }
