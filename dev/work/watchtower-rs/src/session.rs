@@ -1,17 +1,10 @@
-#![forbid(unsafe_code)]
-
-//! Session progress and report aggregation translated from the legacy
-//! Watchtower update pipeline.
-//!
-//! The module stays Docker-agnostic. It only needs a small container view so
-//! the next runtime slice can feed it data without dragging in API clients.
-
 use std::collections::HashMap;
+use std::fmt;
 
 use crate::types::{ContainerID, ContainerReport, ImageID, Report};
 
-/// State of a container during a Watchtower session.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+/// Session state for a container during a single update run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum State {
     Unknown,
     Skipped,
@@ -23,7 +16,7 @@ pub enum State {
 }
 
 impl State {
-    /// Return the legacy display label for the state.
+    /// Return the legacy report label for this state.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Unknown => "Unknown",
@@ -37,180 +30,169 @@ impl State {
     }
 }
 
-/// Minimal container view used by the session layer.
-pub trait SessionContainer {
+impl fmt::Display for State {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Minimal container view used to build session status without Docker types.
+pub trait ContainerLike {
     fn id(&self) -> &ContainerID;
     fn name(&self) -> &str;
     fn image_name(&self) -> &str;
-    fn safe_image_id(&self) -> &ImageID;
+    fn current_image_id(&self) -> &ImageID;
 }
 
-/// Container status recorded during a session.
+/// One container entry in a session.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContainerStatus {
-    container_id: ContainerID,
-    old_image: ImageID,
-    new_image: ImageID,
-    container_name: String,
-    image_name: String,
-    error: Option<String>,
-    state: State,
+    pub container_id: ContainerID,
+    pub current_image_id: ImageID,
+    pub latest_image_id: ImageID,
+    pub container_name: String,
+    pub image_name: String,
+    pub error: Option<String>,
+    pub state: State,
 }
 
 impl ContainerStatus {
-    /// Build a new container status from the runtime container view.
-    pub fn from_container(container: &impl SessionContainer, new_image: ImageID, state: State) -> Self {
+    /// Build a status record from any container-like value.
+    pub fn from_container(
+        container: &impl ContainerLike,
+        latest_image_id: impl Into<ImageID>,
+        state: State,
+    ) -> Self {
         Self {
             container_id: container.id().clone(),
-            old_image: container.safe_image_id().clone(),
-            new_image,
-            container_name: container.name().to_owned(),
-            image_name: container.image_name().to_owned(),
+            current_image_id: container.current_image_id().clone(),
+            latest_image_id: latest_image_id.into(),
+            container_name: container.name().to_string(),
+            image_name: container.image_name().to_string(),
             error: None,
             state,
         }
     }
 
-    /// Return the container identifier.
-    pub fn id(&self) -> &ContainerID {
-        &self.container_id
-    }
-
-    /// Return the container name.
-    pub fn name(&self) -> &str {
-        &self.container_name
-    }
-
-    /// Return the image used when the session started.
-    pub fn current_image_id(&self) -> &ImageID {
-        &self.old_image
-    }
-
-    /// Return the newest image found during the session.
-    pub fn latest_image_id(&self) -> &ImageID {
-        &self.new_image
-    }
-
-    /// Return the image name with tag used by the container.
-    pub fn image_name(&self) -> &str {
-        &self.image_name
-    }
-
-    /// Return the error captured for the container, if any.
-    pub fn error(&self) -> Option<&str> {
-        self.error.as_deref()
-    }
-
-    /// Return the state as a legacy label.
-    pub fn state(&self) -> &'static str {
+    /// Return the state label used in the aggregated report.
+    pub fn state_label(&self) -> &'static str {
         self.state.as_str()
     }
 
-    /// Update the error value.
-    pub fn set_error(&mut self, error: impl Into<String>) {
-        self.error = Some(error.into());
-    }
-
-    /// Update the state value.
-    pub fn set_state(&mut self, state: State) {
-        self.state = state;
-    }
-
-    /// Return true when the container has already been marked as stale.
-    pub fn is_stale(&self) -> bool {
-        self.state == State::Stale
-    }
-
-    fn to_report(&self) -> ContainerReport {
+    fn into_report(self) -> ContainerReport {
+        let state = self.state_label().to_string();
         ContainerReport {
-            id: self.container_id.clone(),
-            name: self.container_name.clone(),
-            current_image_id: self.old_image.clone(),
-            latest_image_id: self.new_image.clone(),
-            image_name: self.image_name.clone(),
-            error: self.error.clone(),
-            state: self.state.as_str().to_owned(),
+            id: self.container_id,
+            name: self.container_name,
+            current_image_id: self.current_image_id,
+            latest_image_id: self.latest_image_id,
+            image_name: self.image_name,
+            error: self.error,
+            state,
         }
     }
 }
 
-/// Current session progress, keyed by container identifier.
+/// Session progress indexed by container ID.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Progress {
     entries: HashMap<ContainerID, ContainerStatus>,
 }
 
 impl Progress {
-    /// Create an empty progress tracker.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Add or replace a recorded container status.
+    /// Add or replace an entry.
     pub fn add(&mut self, update: ContainerStatus) {
         self.entries.insert(update.container_id.clone(), update);
     }
 
-    /// Add a container with the `Skipped` state.
-    pub fn add_skipped(&mut self, container: &impl SessionContainer, error: impl Into<String>) {
+    /// Add a scanned container to the session.
+    pub fn add_scanned(
+        &mut self,
+        container: &impl ContainerLike,
+        latest_image_id: impl Into<ImageID>,
+    ) {
+        self.add(ContainerStatus::from_container(
+            container,
+            latest_image_id,
+            State::Scanned,
+        ));
+    }
+
+    /// Add a skipped container to the session.
+    pub fn add_skipped(
+        &mut self,
+        container: &impl ContainerLike,
+        err: impl ToString,
+    ) {
         let mut update = ContainerStatus::from_container(
             container,
-            container.safe_image_id().clone(),
+            container.current_image_id().clone(),
             State::Skipped,
         );
-        update.set_error(error);
+        update.error = Some(err.to_string());
         self.add(update);
     }
 
-    /// Add a container with the `Scanned` state.
-    pub fn add_scanned(&mut self, container: &impl SessionContainer, new_image: ImageID) {
-        self.add(ContainerStatus::from_container(container, new_image, State::Scanned));
-    }
-
-    /// Mark the given container as having failed during the session.
-    pub fn update_failed(&mut self, failures: impl IntoIterator<Item = (ContainerID, String)>) {
-        for (id, error) in failures {
-            if let Some(update) = self.entries.get_mut(&id) {
-                update.set_error(error);
-                update.set_state(State::Failed);
-            }
-        }
-    }
-
-    /// Mark the given container as queued for update.
+    /// Mark a previously scanned container as selected for update.
     pub fn mark_for_update(&mut self, container_id: &ContainerID) {
-        if let Some(update) = self.entries.get_mut(container_id) {
-            update.set_state(State::Updated);
+        self.entries
+            .get_mut(container_id)
+            .expect("container must exist before mark_for_update")
+            .state = State::Updated;
+    }
+
+    /// Mark a previously scanned container as skipped.
+    pub fn mark_skipped(&mut self, container_id: &ContainerID, err: impl ToString) {
+        if let Some(entry) = self.entries.get_mut(container_id) {
+            entry.state = State::Skipped;
+            entry.error = Some(err.to_string());
         }
     }
 
-    /// Build the legacy report structure from the recorded progress.
+    /// Mark containers as failed.
+    pub fn update_failed<E>(&mut self, failures: impl IntoIterator<Item = (ContainerID, E)>)
+    where
+        E: ToString,
+    {
+        for (container_id, err) in failures {
+            let entry = self
+                .entries
+                .get_mut(&container_id)
+                .expect("container must exist before update_failed");
+            entry.state = State::Failed;
+            entry.error = Some(err.to_string());
+        }
+    }
+
+    /// Convert the session progress into the crate's aggregated report shape.
     pub fn report(&self) -> Report {
         let mut report = Report::default();
 
-        for status in self.entries.values() {
-            if status.state == State::Skipped {
-                report.skipped.push(status.to_report());
+        for status in self.entries.values().cloned() {
+            let state = status.state;
+
+            if state == State::Skipped {
+                report.skipped.push(status.into_report());
                 continue;
             }
 
-            report.scanned.push(status.to_report());
+            let mut report_entry = status.into_report();
+            report.scanned.push(report_entry.clone());
 
-            if status.current_image_id() == status.latest_image_id() {
-                let mut fresh = status.to_report();
-                fresh.state = State::Fresh.as_str().to_owned();
-                report.fresh.push(fresh);
+            if report_entry.current_image_id == report_entry.latest_image_id {
+                report_entry.state = State::Fresh.as_str().to_string();
+                report.fresh.push(report_entry);
                 continue;
             }
 
-            match status.state {
-                State::Updated => report.updated.push(status.to_report()),
-                State::Failed => report.failed.push(status.to_report()),
-                _ => {
-                    let mut stale = status.to_report();
-                    stale.state = State::Stale.as_str().to_owned();
-                    report.stale.push(stale);
+            match state {
+                State::Updated => report.updated.push(report_entry),
+                State::Failed => report.failed.push(report_entry),
+                State::Unknown | State::Scanned | State::Fresh | State::Stale => {
+                    report_entry.state = State::Stale.as_str().to_string();
+                    report.stale.push(report_entry);
                 }
+                State::Skipped => unreachable!("skipped entries are handled earlier"),
             }
         }
 
@@ -223,15 +205,16 @@ impl Progress {
 
         report
     }
+}
 
-    /// Return true when no container status entries have been recorded.
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
+impl From<Progress> for Report {
+    fn from(value: Progress) -> Self {
+        value.report()
     }
 }
 
 fn sort_reports(reports: &mut [ContainerReport]) {
-    reports.sort_by(|a, b| a.id.as_ref().cmp(b.id.as_ref()));
+    reports.sort_by(|left, right| left.id.as_str().cmp(right.id.as_str()));
 }
 
 #[cfg(test)]
@@ -243,10 +226,10 @@ mod tests {
         id: ContainerID,
         name: String,
         image_name: String,
-        safe_image_id: ImageID,
+        current_image_id: ImageID,
     }
 
-    impl SessionContainer for MockContainer {
+    impl ContainerLike for MockContainer {
         fn id(&self) -> &ContainerID {
             &self.id
         }
@@ -259,74 +242,99 @@ mod tests {
             &self.image_name
         }
 
-        fn safe_image_id(&self) -> &ImageID {
-            &self.safe_image_id
+        fn current_image_id(&self) -> &ImageID {
+            &self.current_image_id
         }
     }
 
-    fn container(id: &str, name: &str, image: &str) -> MockContainer {
+    fn container(id: &str, name: &str, image_name: &str, current_image_id: &str) -> MockContainer {
         MockContainer {
             id: ContainerID::from(id),
-            name: name.to_owned(),
-            image_name: image.to_owned(),
-            safe_image_id: ImageID::from("sha256:old"),
+            name: name.to_string(),
+            image_name: image_name.to_string(),
+            current_image_id: ImageID::from(current_image_id),
         }
     }
 
     #[test]
-    fn state_strings_match_legacy_labels() {
-        assert_eq!(State::Skipped.as_str(), "Skipped");
-        assert_eq!(State::Stale.as_str(), "Stale");
+    fn status_mapping_preserves_container_fields_and_labels() {
+        let container = container("sha256:1234567890abcdef", "app", "example/app:latest", "old");
+
+        let status = ContainerStatus::from_container(&container, "new", State::Updated);
+
+        assert_eq!(status.container_id, ContainerID::from("sha256:1234567890abcdef"));
+        assert_eq!(status.container_name, "app");
+        assert_eq!(status.image_name, "example/app:latest");
+        assert_eq!(status.current_image_id, ImageID::from("old"));
+        assert_eq!(status.latest_image_id, ImageID::from("new"));
+        assert_eq!(status.state_label(), "Updated");
         assert_eq!(State::Unknown.as_str(), "Unknown");
     }
 
     #[test]
-    fn progress_handles_skipped_scanned_and_failed_entries() {
-        let first = container("sha256:bbbbbbbbbbbb", "/alpha", "repo:1");
-        let second = container("sha256:aaaaaaaaaaaa", "/beta", "repo:2");
+    fn skipped_and_scanned_entries_classify_like_the_legacy_session() {
+        let scanned = container("b", "scanned", "image:scanned", "old");
+        let skipped = container("a", "skipped", "image:skipped", "same");
 
-        let mut progress = Progress::new();
-        progress.add_skipped(&first, "skip");
-        progress.add_scanned(&second, ImageID::from("sha256:new"));
-        progress.mark_for_update(second.id());
-        progress.update_failed(vec![(second.id().clone(), "boom".to_owned())]);
+        let mut progress = Progress::default();
+        progress.add_scanned(&scanned, "next");
+        progress.add_skipped(&skipped, "disabled by label");
 
         let report = progress.report();
 
-        assert_eq!(report.skipped.len(), 1);
         assert_eq!(report.scanned.len(), 1);
-        assert_eq!(report.failed.len(), 1);
-        assert_eq!(report.updated.len(), 0);
-        assert_eq!(report.stale.len(), 0);
-        assert_eq!(report.fresh.len(), 0);
-        assert_eq!(report.all().count(), 3);
-        assert!(report
-            .failed
-            .iter()
-            .any(|entry| entry.error.as_deref() == Some("boom")));
+        assert_eq!(report.skipped.len(), 1);
+        assert_eq!(report.scanned[0].id, ContainerID::from("b"));
+        assert_eq!(report.skipped[0].id, ContainerID::from("a"));
+        assert_eq!(report.skipped[0].state, "Skipped");
     }
 
     #[test]
-    fn progress_marks_fresh_and_stale_entries() {
-        let fresh = MockContainer {
-            safe_image_id: ImageID::from("sha256:same"),
-            ..container("sha256:fresh", "/fresh", "repo:latest")
-        };
-        let stale = MockContainer {
-            safe_image_id: ImageID::from("sha256:old"),
-            ..container("sha256:stale", "/stale", "repo:latest")
-        };
+    fn update_failure_marks_entry_failed() {
+        let container = container("c", "updating", "image:update", "old");
+        let mut progress = Progress::default();
 
-        let mut progress = Progress::new();
-        progress.add_scanned(&fresh, ImageID::from("sha256:same"));
-        progress.add_scanned(&stale, ImageID::from("sha256:new"));
+        progress.add_scanned(&container, "new");
+        progress.mark_for_update(container.id());
+        progress.update_failed([(container.id().clone(), "pull failed")]);
 
         let report = progress.report();
 
-        assert_eq!(report.fresh.len(), 1);
-        assert_eq!(report.stale.len(), 1);
-        assert_eq!(report.scanned.len(), 2);
-        assert!(report.fresh[0].state == "Fresh");
-        assert!(report.stale[0].state == "Stale");
+        assert_eq!(report.scanned.len(), 1);
+        assert_eq!(report.updated.len(), 0);
+        assert_eq!(report.failed.len(), 1);
+        assert_eq!(report.failed[0].state, "Failed");
+        assert_eq!(report.failed[0].error.as_deref(), Some("pull failed"));
+    }
+
+    #[test]
+    fn report_conversion_sorts_and_classifies_buckets() {
+        let fresh = container("d", "fresh", "image:fresh", "same");
+        let updated = container("c", "updated", "image:updated", "old");
+        let failed = container("b", "failed", "image:failed", "old");
+        let skipped = container("e", "skipped", "image:skipped", "old");
+        let stale = container("a", "stale", "image:stale", "old");
+
+        let mut progress = Progress::default();
+        progress.add_scanned(&stale, "new-stale");
+        progress.add_scanned(&failed, "new-failed");
+        progress.add_scanned(&updated, "new-updated");
+        progress.add_scanned(&fresh, "same");
+        progress.add_scanned(&skipped, "new-skipped");
+
+        progress.mark_for_update(updated.id());
+        progress.mark_for_update(failed.id());
+        progress.update_failed([(failed.id().clone(), "network error")]);
+        progress.mark_skipped(skipped.id(), "container disappeared");
+
+        let report = progress.report();
+
+        assert_eq!(report.scanned.iter().map(|entry| entry.id.as_str()).collect::<Vec<_>>(), vec!["a", "b", "c", "d"]);
+        assert_eq!(report.updated.iter().map(|entry| entry.id.as_str()).collect::<Vec<_>>(), vec!["c"]);
+        assert_eq!(report.failed.iter().map(|entry| entry.id.as_str()).collect::<Vec<_>>(), vec!["b"]);
+        assert_eq!(report.skipped.iter().map(|entry| entry.id.as_str()).collect::<Vec<_>>(), vec!["e"]);
+        assert_eq!(report.fresh.iter().map(|entry| entry.id.as_str()).collect::<Vec<_>>(), vec!["d"]);
+        assert_eq!(report.stale.iter().map(|entry| entry.id.as_str()).collect::<Vec<_>>(), vec!["a"]);
+        assert_eq!(report.stale[0].state, "Stale");
     }
 }
