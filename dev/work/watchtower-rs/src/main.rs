@@ -1,81 +1,75 @@
-use std::time::Duration;
+mod cli;
 
-use clap::Parser;
+use anyhow::Result;
+use cli::{LogFormat, LoggingConfig, PollingMode, WatchtowerCli, WatchtowerConfig};
 use watchtower_rs::AppConfig;
 
-fn main() -> watchtower_rs::Result<()> {
-    init_logging();
-    let config = AppConfig::from_cli(Cli::parse().into_app_config());
-    watchtower_rs::run(config)
+fn main() -> Result<()> {
+    let cli = WatchtowerCli::try_parse_resolved()?;
+    init_logging(&cli.logging);
+    let config = AppConfig::from_cli(cli);
+    watchtower_rs::run(config)?;
+    Ok(())
 }
 
-fn init_logging() {
-    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+fn init_logging(logging: &LoggingConfig) {
+    let filter = tracing_subscriber::EnvFilter::new(logging_level(logging).to_string());
+    let ansi_enabled = !logging.no_color;
 
-    tracing_subscriber::fmt()
+    let builder = tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_target(false)
-        .compact()
-        .init();
+        .with_ansi(ansi_enabled);
+
+    match logging.log_format {
+        LogFormat::Pretty => builder.pretty().init(),
+        LogFormat::Json | LogFormat::Logfmt | LogFormat::Auto => builder.compact().init(),
+    }
 }
 
-#[derive(Debug, Parser)]
-#[command(author, version, about)]
-struct Cli {
-    #[arg(long, env)]
-    run_once: bool,
-    #[arg(long, env)]
-    monitor_only: bool,
-    #[arg(long, env)]
-    cleanup: bool,
-    #[arg(long, env)]
-    remove_volumes: bool,
-    #[arg(long, env)]
-    include_stopped: bool,
-    #[arg(long, env)]
-    revive_stopped: bool,
-    #[arg(long, env)]
-    include_restarting: bool,
-    #[arg(long, env)]
-    rolling_restart: bool,
-    #[arg(long, env)]
-    schedule: Option<String>,
-    #[arg(long, env, value_name = "SECONDS")]
-    interval: Option<u64>,
-    #[arg(long, env)]
-    http_api_token: Option<String>,
-    #[arg(long, env)]
-    enable_http_update_api: bool,
-    #[arg(long, env)]
-    enable_http_metrics_api: bool,
-    #[arg(long, env)]
-    unblock_http_api: bool,
-    #[arg(long, env)]
-    scope: Option<String>,
-    #[arg(long, env)]
-    health_check: bool,
+fn logging_level(logging: &LoggingConfig) -> cli::LogLevel {
+    if logging.trace {
+        cli::LogLevel::Trace
+    } else if logging.debug {
+        cli::LogLevel::Debug
+    } else {
+        logging.log_level
+    }
 }
 
-impl Cli {
-    fn into_app_config(self) -> AppConfig {
-        AppConfig {
-            run_once: self.run_once,
-            monitor_only: self.monitor_only,
-            cleanup: self.cleanup,
-            remove_volumes: self.remove_volumes,
-            include_stopped: self.include_stopped,
-            revive_stopped: self.revive_stopped,
-            include_restarting: self.include_restarting,
-            rolling_restart: self.rolling_restart,
-            schedule: self.schedule,
-            interval: self.interval.map(Duration::from_secs),
-            http_api_token: self.http_api_token,
-            enable_http_update_api: self.enable_http_update_api,
-            enable_http_metrics_api: self.enable_http_metrics_api,
-            unblock_http_api: self.unblock_http_api,
-            scope: self.scope,
-            health_check: self.health_check,
+impl From<WatchtowerConfig> for AppConfig {
+    fn from(config: WatchtowerConfig) -> Self {
+        let WatchtowerConfig {
+            scheduling,
+            update,
+            selection,
+            http_api,
+            health_check,
+            ..
+        } = config;
+
+        let (schedule, interval) = match scheduling.mode {
+            PollingMode::Interval(duration) => (None, Some(duration)),
+            PollingMode::Schedule(schedule) => (Some(schedule), None),
+        };
+
+        Self {
+            run_once: update.run_once,
+            monitor_only: update.monitor_only,
+            cleanup: update.cleanup,
+            remove_volumes: update.remove_volumes,
+            include_stopped: update.include_stopped,
+            revive_stopped: update.revive_stopped,
+            include_restarting: update.include_restarting,
+            rolling_restart: update.rolling_restart,
+            schedule,
+            interval,
+            http_api_token: http_api.token,
+            enable_http_update_api: http_api.update,
+            enable_http_metrics_api: http_api.metrics,
+            unblock_http_api: scheduling.periodic_polls,
+            scope: selection.scope,
+            health_check,
         }
     }
 }

@@ -59,8 +59,9 @@ pub struct WatchtowerCli {
 
 impl WatchtowerCli {
     /// Parse the process arguments and resolve environment-backed defaults.
-    pub fn parse_resolved() -> Result<WatchtowerConfig, CliError> {
-        Self::parse().try_into()
+    pub fn try_parse_resolved() -> Result<WatchtowerConfig, WatchtowerCliError> {
+        let cli = Self::try_parse()?;
+        Ok(cli.try_into()?)
     }
 }
 
@@ -85,7 +86,8 @@ pub struct SchedulingArgs {
         short = 's',
         long,
         env = "WATCHTOWER_SCHEDULE",
-        value_name = "CRON"
+        value_name = "CRON",
+        value_parser = clap::builder::NonEmptyStringValueParser::new()
     )]
     pub schedule: Option<String>,
 
@@ -143,6 +145,10 @@ pub struct UpdateArgs {
     #[arg(short = 'R', long, env = "WATCHTOWER_RUN_ONCE")]
     pub run_once: bool,
 
+    /// Skip the standard health check path and exit immediately.
+    #[arg(long = "health-check")]
+    pub health_check: bool,
+
     /// Allow labels to take precedence over global arguments.
     #[arg(long, env = "WATCHTOWER_LABEL_TAKE_PRECEDENCE")]
     pub label_take_precedence: bool,
@@ -157,21 +163,25 @@ pub struct SelectionArgs {
 
     /// Exclude containers by name.
     ///
-    /// The legacy program accepted comma or whitespace separated values in the
-    /// environment variable, so this keeps the parser permissive and normalizes
-    /// the result after parsing.
+    /// The legacy program accepted comma- or whitespace-separated values, so
+    /// each parsed chunk is normalized immediately and later flattened.
     #[arg(
         short = 'x',
         long = "disable-containers",
         env = "WATCHTOWER_DISABLE_CONTAINERS",
-        value_delimiter = ',',
         num_args = 0..,
+        value_parser = parse_disable_container_values,
         value_name = "CONTAINER"
     )]
-    pub disable_containers: Vec<String>,
+    pub disable_containers: Vec<DisableContainerValues>,
 
     /// Restrict the watchtower instance to a named scope.
-    #[arg(long, env = "WATCHTOWER_SCOPE", value_name = "SCOPE")]
+    #[arg(
+        long,
+        env = "WATCHTOWER_SCOPE",
+        value_name = "SCOPE",
+        value_parser = clap::builder::NonEmptyStringValueParser::new()
+    )]
     pub scope: Option<String>,
 }
 
@@ -190,7 +200,12 @@ pub struct HttpApiArgs {
     ///
     /// This is intentionally kept as plain text at the CLI layer; future slices
     /// can add secret-file expansion at the config boundary if needed.
-    #[arg(long, env = "WATCHTOWER_HTTP_API_TOKEN", value_name = "TOKEN")]
+    #[arg(
+        long,
+        env = "WATCHTOWER_HTTP_API_TOKEN",
+        value_name = "TOKEN",
+        value_parser = clap::builder::NonEmptyStringValueParser::new()
+    )]
     pub token: Option<String>,
 
     /// Keep periodic polls active even when HTTP API mode is enabled.
@@ -199,7 +214,7 @@ pub struct HttpApiArgs {
 }
 
 /// Logging-related switches.
-#[derive(Debug, Clone, Parser, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, Parser, PartialEq, Eq, Default)]
 pub struct LoggingArgs {
     /// Maximum log level written to stderr.
     #[arg(long, env = "WATCHTOWER_LOG_LEVEL", value_enum, default_value_t = LogLevel::Info)]
@@ -224,6 +239,23 @@ pub struct LoggingArgs {
     /// Prevent the startup message from being emitted.
     #[arg(long, env = "WATCHTOWER_NO_STARTUP_MESSAGE")]
     pub no_startup_message: bool,
+}
+
+/// A normalized chunk of `disable-containers` values.
+///
+/// Clap parses each raw CLI occurrence or environment chunk independently, so
+/// this keeps the parser explicit while still preserving the legacy support for
+/// commas and whitespace as separators.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DisableContainerValues {
+    values: Vec<String>,
+}
+
+impl DisableContainerValues {
+    /// Consume the parsed chunk and return the normalized container names.
+    pub fn into_inner(self) -> Vec<String> {
+        self.values
+    }
 }
 
 /// Maximum log level values supported by the legacy surface.
@@ -262,6 +294,9 @@ pub struct WatchtowerConfig {
 
     /// Resolved update behavior.
     pub update: UpdateConfig,
+
+    /// Legacy health-check startup mode.
+    pub health_check: bool,
 
     /// Resolved selection filters.
     pub selection: SelectionConfig,
@@ -349,13 +384,18 @@ pub enum CliError {
     /// The poll interval was explicitly set to zero.
     #[error("`--interval` must be greater than zero")]
     InvalidInterval,
+}
 
-    /// A duration value could not be parsed.
-    #[error("invalid duration {value:?}: {message}")]
-    InvalidDuration {
-        value: String,
-        message: String,
-    },
+/// Errors that can occur while parsing or resolving the CLI surface.
+#[derive(Debug, Error)]
+pub enum WatchtowerCliError {
+    /// clap rejected the raw CLI arguments.
+    #[error(transparent)]
+    Parse(#[from] clap::Error),
+
+    /// The parsed values were not a valid runtime configuration.
+    #[error(transparent)]
+    Resolve(#[from] CliError),
 }
 
 impl TryFrom<WatchtowerCli> for WatchtowerConfig {
@@ -372,7 +412,7 @@ impl TryFrom<WatchtowerCli> for WatchtowerConfig {
         } = cli;
 
         let scheduling = resolve_scheduling(scheduling, http_api.periodic_polls)?;
-        let logging = resolve_logging(logging);
+        let logging = logging.into();
 
         Ok(Self {
             containers,
@@ -390,9 +430,10 @@ impl TryFrom<WatchtowerCli> for WatchtowerConfig {
                 run_once: update.run_once,
                 label_take_precedence: update.label_take_precedence,
             },
+            health_check: update.health_check,
             selection: SelectionConfig {
                 label_enable: selection.label_enable,
-                disable_containers: normalize_list(selection.disable_containers),
+                disable_containers: flatten_disable_container_values(selection.disable_containers),
                 scope: selection.scope,
             },
             http_api: HttpApiConfig {
@@ -402,6 +443,47 @@ impl TryFrom<WatchtowerCli> for WatchtowerConfig {
             },
             logging,
         })
+    }
+}
+
+impl LoggingArgs {
+    /// Resolve the effective log level after applying the legacy debug/trace
+    /// overrides.
+    pub fn effective_level(&self) -> LogLevel {
+        if self.trace {
+            LogLevel::Trace
+        } else if self.debug {
+            LogLevel::Debug
+        } else {
+            self.log_level
+        }
+    }
+}
+
+impl LoggingConfig {
+    /// Return the effective log level after legacy overrides.
+    pub fn effective_level(&self) -> LogLevel {
+        self.log_level
+    }
+
+    /// Whether ANSI color codes should be emitted.
+    pub fn ansi_enabled(&self) -> bool {
+        !self.no_color
+    }
+}
+
+impl From<LoggingArgs> for LoggingConfig {
+    fn from(args: LoggingArgs) -> Self {
+        let log_level = args.effective_level();
+
+        Self {
+            log_level,
+            log_format: args.log_format,
+            debug: args.debug,
+            trace: args.trace,
+            no_color: args.no_color,
+            no_startup_message: args.no_startup_message,
+        }
     }
 }
 
@@ -453,15 +535,7 @@ fn resolve_scheduling(
             }
             PollingMode::Interval(Duration::from_secs(interval))
         }
-        (None, Some(schedule)) => {
-            if schedule.trim().is_empty() {
-                return Err(CliError::InvalidDuration {
-                    value: schedule,
-                    message: "schedule cannot be empty".to_owned(),
-                });
-            }
-            PollingMode::Schedule(schedule)
-        }
+        (None, Some(schedule)) => PollingMode::Schedule(schedule),
         (Some(interval), Some(_)) => {
             debug_assert!(interval > 0);
             return Err(CliError::PollingConflict);
@@ -476,38 +550,88 @@ fn resolve_scheduling(
     })
 }
 
-fn resolve_logging(args: LoggingArgs) -> LoggingConfig {
-    let log_level = if args.trace {
-        LogLevel::Trace
-    } else if args.debug {
-        LogLevel::Debug
-    } else {
-        args.log_level
-    };
-
-    LoggingConfig {
-        log_level,
-        log_format: args.log_format,
-        debug: args.debug,
-        trace: args.trace,
-        no_color: args.no_color,
-        no_startup_message: args.no_startup_message,
-    }
-}
-
-fn normalize_list(values: Vec<String>) -> Vec<String> {
+fn flatten_disable_container_values(values: Vec<DisableContainerValues>) -> Vec<String> {
     let mut normalized = Vec::new();
 
-    for raw in values {
-        for item in raw.split(|c: char| c == ',' || c.is_whitespace()) {
-            let item = item.trim();
-            if !item.is_empty() {
-                normalized.push(item.to_owned());
-            }
-        }
+    for value in values {
+        normalized.extend(value.into_inner());
     }
 
     normalized
+}
+
+fn parse_disable_container_values(input: &str) -> Result<DisableContainerValues, String> {
+    let values = input
+        .split(|c: char| c == ',' || c.is_whitespace())
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(str::to_owned)
+        .collect();
+
+    Ok(DisableContainerValues { values })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_disable_containers_from_mixed_separators() {
+        let disable_containers = flatten_disable_container_values(vec![
+            parse_disable_container_values("alpha,beta gamma").expect("chunk parses"),
+            parse_disable_container_values("delta").expect("chunk parses"),
+            parse_disable_container_values("epsilon,zeta").expect("chunk parses"),
+        ]);
+
+        assert_eq!(
+            disable_containers,
+            vec![
+                "alpha".to_owned(),
+                "beta".to_owned(),
+                "gamma".to_owned(),
+                "delta".to_owned(),
+                "epsilon".to_owned(),
+                "zeta".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn logging_args_apply_debug_and_trace_overrides() {
+        let base = LoggingArgs {
+            log_level: LogLevel::Warn,
+            log_format: LogFormat::Auto,
+            debug: false,
+            trace: false,
+            no_color: false,
+            no_startup_message: false,
+        };
+
+        assert_eq!(base.effective_level(), LogLevel::Warn);
+        assert_eq!((LoggingArgs { debug: true, ..base }).effective_level(), LogLevel::Debug);
+        assert_eq!((LoggingArgs { trace: true, ..base }).effective_level(), LogLevel::Trace);
+    }
+
+    #[test]
+    fn carries_health_check_into_resolved_config() {
+        let cli = WatchtowerCli {
+            scheduling: SchedulingArgs::default(),
+            update: UpdateArgs {
+                health_check: true,
+                ..UpdateArgs::default()
+            },
+            selection: SelectionArgs::default(),
+            http_api: HttpApiArgs::default(),
+            logging: LoggingArgs::default(),
+            containers: Vec::new(),
+        };
+
+        let config: WatchtowerConfig = cli
+            .try_into()
+            .expect("config resolves");
+
+        assert!(config.health_check);
+    }
 }
 
 fn parse_duration(input: &str) -> Result<Duration, String> {
@@ -552,6 +676,7 @@ fn parse_duration(input: &str) -> Result<Duration, String> {
             .ok_or_else(|| format!("duration value {trimmed:?} overflows u64"))?;
         current = 0;
         saw_unit = true;
+        saw_digit = false;
     }
 
     if !saw_unit || current != 0 {
