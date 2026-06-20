@@ -21,6 +21,7 @@ pub mod lifecycle;
 pub mod metrics;
 pub mod notifications;
 pub mod startup;
+pub mod wait;
 pub mod sorter;
 pub mod session;
 pub mod registry;
