@@ -22,9 +22,6 @@ pub enum CredentialsError {
     /// No usable `REPO_USER`/`REPO_PASS` pair was present in the environment.
     #[error("registry auth environment variables (REPO_USER, REPO_PASS) not set")]
     MissingEnvironmentCredentials,
-    /// `HOME` is missing, so the default Docker config location cannot be built.
-    #[error("HOME is not set, cannot locate ~/.docker/config.json")]
-    MissingHomeDirectory,
     /// The Docker config file could not be read.
     #[error("could not read Docker config file {path:?}: {message}")]
     ConfigRead { path: PathBuf, message: String },
@@ -83,16 +80,20 @@ fn encoded_env_auth_from_values(username: Option<&str>, password: Option<&str>) 
 
 /// Resolve the default Docker config path.
 ///
-/// `DOCKER_CONFIG` is treated as a directory, matching Docker's usual layout.
-/// If it already points at a `config.json` file, that file is used directly.
+/// The legacy Go runtime fell back to `/config.json` when `DOCKER_CONFIG` was
+/// not set. When `DOCKER_CONFIG` is present it is treated as either a directory
+/// or a direct path to `config.json`.
 fn docker_config_path() -> Result<PathBuf> {
-    if let Some(raw) = env::var_os("DOCKER_CONFIG") {
+    docker_config_path_from(env::var_os("DOCKER_CONFIG"))
+}
+
+fn docker_config_path_from(raw: Option<std::ffi::OsString>) -> Result<PathBuf> {
+    if let Some(raw) = raw {
         let path = PathBuf::from(raw);
         return Ok(resolve_docker_config_file(path));
     }
 
-    let home = env::var_os("HOME").ok_or(CredentialsError::MissingHomeDirectory)?;
-    Ok(PathBuf::from(home).join(".docker").join("config.json"))
+    Ok(PathBuf::from("/config.json"))
 }
 
 fn resolve_docker_config_file(base: PathBuf) -> PathBuf {
@@ -347,6 +348,28 @@ mod tests {
             .expect_err("missing config file should fail");
 
         assert!(matches!(err, CredentialsError::ConfigRead { path: missing_path, .. } if missing_path == path));
+    }
+
+    #[test]
+    fn docker_config_path_defaults_to_root_config_file() {
+        assert_eq!(
+            docker_config_path_from(None).expect("default path should resolve"),
+            PathBuf::from("/config.json")
+        );
+    }
+
+    #[test]
+    fn docker_config_path_treats_environment_value_as_directory_or_file() {
+        assert_eq!(
+            docker_config_path_from(Some("/tmp/docker-config".into()))
+                .expect("directory should resolve"),
+            PathBuf::from("/tmp/docker-config/config.json")
+        );
+        assert_eq!(
+            docker_config_path_from(Some("/tmp/docker-config.json".into()))
+                .expect("file should resolve"),
+            PathBuf::from("/tmp/docker-config.json")
+        );
     }
 
     #[test]
