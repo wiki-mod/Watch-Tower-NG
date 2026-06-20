@@ -26,6 +26,15 @@ pub struct UpdatePlan {
     pub cleanup_image_ids: Vec<ImageID>,
 }
 
+/// Cleanup plan for older watchtower instances.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WatchtowerInstanceCleanupPlan {
+    /// Container IDs that should be stopped, ordered from oldest to newest.
+    pub stop_container_ids: Vec<ContainerID>,
+    /// Image IDs that should be removed after the stop step.
+    pub cleanup_image_ids: Vec<ImageID>,
+}
+
 /// Fail when rolling restarts are requested on dependency-linked containers.
 pub fn check_for_sanity<C: RuntimeContainer>(containers: &[C], rolling_restarts: bool) -> Result<(), String> {
     if !rolling_restarts {
@@ -163,6 +172,42 @@ pub fn retain_unused_cleanup_image_ids<C: RuntimeContainer>(
         .into_iter()
         .filter(|image_id| !in_use.contains(image_id.as_str()))
         .collect()
+}
+
+/// Build the cleanup plan for older watchtower instances.
+///
+/// The Go implementation sorts by creation time and keeps the newest instance
+/// alive. This helper assumes the caller already supplied containers in that
+/// order and returns the older instances that should be stopped, plus their
+/// image IDs when cleanup is enabled.
+pub fn build_watchtower_instance_cleanup_plan<C: RuntimeContainer>(
+    containers: &[C],
+    cleanup: bool,
+) -> WatchtowerInstanceCleanupPlan {
+    let stop_container_ids = if containers.len() > 1 {
+        containers[..containers.len() - 1]
+            .iter()
+            .map(|container| container.id().clone())
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    let cleanup_image_ids = if cleanup {
+        dedupe_cleanup_image_ids(
+            containers
+                .iter()
+                .take(containers.len().saturating_sub(1))
+                .map(|container| container.image_id().clone()),
+        )
+    } else {
+        Vec::new()
+    };
+
+    WatchtowerInstanceCleanupPlan {
+        stop_container_ids,
+        cleanup_image_ids,
+    }
 }
 
 #[cfg(test)]
@@ -384,5 +429,35 @@ mod tests {
         let err = build_update_plan(&containers, &params).expect_err("should reject");
 
         assert!(err.contains("rolling restarts"));
+    }
+
+    #[test]
+    fn build_watchtower_instance_cleanup_plan_keeps_newest_instance_and_dedupes_images() {
+        let containers = vec![
+            container("old-a", "/watchtower-old-a", &[], "sha256:wt-a"),
+            container("old-b", "/watchtower-old-b", &[], "sha256:wt-a"),
+            container("new", "/watchtower-new", &[], "sha256:wt-new"),
+        ];
+
+        let plan = build_watchtower_instance_cleanup_plan(&containers, true);
+
+        assert_eq!(
+            plan.stop_container_ids,
+            vec![ContainerID::from("old-a"), ContainerID::from("old-b")]
+        );
+        assert_eq!(plan.cleanup_image_ids, vec![ImageID::from("sha256:wt-a")]);
+    }
+
+    #[test]
+    fn build_watchtower_instance_cleanup_plan_skips_cleanup_when_disabled() {
+        let containers = vec![
+            container("old", "/watchtower-old", &[], "sha256:wt-old"),
+            container("new", "/watchtower-new", &[], "sha256:wt-new"),
+        ];
+
+        let plan = build_watchtower_instance_cleanup_plan(&containers, false);
+
+        assert_eq!(plan.stop_container_ids, vec![ContainerID::from("old")]);
+        assert!(plan.cleanup_image_ids.is_empty());
     }
 }
