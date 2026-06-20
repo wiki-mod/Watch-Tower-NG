@@ -11,7 +11,9 @@ use std::time::Duration;
 
 pub mod filters;
 pub mod actions;
+pub mod container;
 pub mod session;
+pub mod registry;
 pub mod types;
 
 /// Shared result type for the library.

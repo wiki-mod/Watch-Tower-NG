@@ -18,4 +18,7 @@ Rules:
 - Do not add new work files directly in `dev/` root unless they are one of the agreed governance files.
 - Prefer stable folder names over ad-hoc dumps so agent work stays easy to route and review.
 - Commit and push the current state at least every 15 minutes during active work.
-- If `sccache` is used, Redis and sccache-dist are mandatory and must point to `192.168.1.230` and `192.168.1.220` respectively.
+- `sccache` usage requires both support services:
+  - Redis: `192.168.1.230`
+  - sccache-dist: `192.168.1.220`
+- Using `sccache` without both endpoints configured is not allowed.
