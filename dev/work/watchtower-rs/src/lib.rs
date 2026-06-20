@@ -14,6 +14,7 @@ pub mod actions;
 pub mod api;
 pub mod api_metrics;
 pub mod api_update;
+pub mod cgroup;
 pub mod container;
 pub mod lifecycle;
 pub mod metrics;

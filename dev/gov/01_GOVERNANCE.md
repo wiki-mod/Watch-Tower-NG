@@ -44,6 +44,7 @@ Tooling policy:
 - Redis endpoint: `192.168.1.230`
 - sccache-dist endpoint: `192.168.1.220`
 - Using `sccache` without both Redis and sccache-dist configured is not allowed.
+- `sccache` usage is only permitted when both endpoints are reachable and configured; this is a hard requirement, not a recommendation.
 
 Delivery policy:
 - Keep the code modern, commented, and understandable for humans.
