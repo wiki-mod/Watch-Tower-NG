@@ -9,4 +9,6 @@ pub mod helpers;
 pub mod manifest;
 pub mod auth;
 pub mod digest;
+pub mod credentials;
 pub mod trust;
+pub mod pull;
