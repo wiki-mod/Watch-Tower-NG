@@ -8,6 +8,9 @@
 
 use std::sync::{Mutex, TryLockError};
 
+/// Legacy HTTP path used by the update endpoint.
+pub const PATH: &str = "/v1/update";
+
 /// Parse every `image` query value into a flat list of image filters.
 ///
 /// The legacy handler used `strings.Split(value, ",")` for each query value and
@@ -35,6 +38,36 @@ where
     }
 
     images
+}
+
+/// Snapshot of an incoming update request.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct UpdateRequest {
+    /// Raw request body.
+    pub body: String,
+    /// Raw `image` query values.
+    pub image_queries: Vec<String>,
+}
+
+impl UpdateRequest {
+    /// Create a request snapshot from raw inputs.
+    pub fn new(
+        body: impl Into<String>,
+        image_queries: impl IntoIterator<Item = impl AsRef<str>>,
+    ) -> Self {
+        Self {
+            body: body.into(),
+            image_queries: image_queries
+                .into_iter()
+                .map(|query| query.as_ref().to_string())
+                .collect(),
+        }
+    }
+
+    /// Return the flattened image filter list.
+    pub fn images(&self) -> Vec<String> {
+        flatten_image_queries(self.image_queries.iter())
+    }
 }
 
 /// Outcome of a gated update attempt.
@@ -91,6 +124,36 @@ impl UpdateGate {
     }
 }
 
+/// Minimal handler wrapper matching the legacy Go endpoint behavior.
+pub struct UpdateHandler<F> {
+    update_fn: F,
+    gate: UpdateGate,
+}
+
+impl<F> UpdateHandler<F>
+where
+    F: Fn(&[String]),
+{
+    /// Create a handler with a fresh lock.
+    pub fn new(update_fn: F) -> Self {
+        Self {
+            update_fn,
+            gate: UpdateGate::new(),
+        }
+    }
+
+    /// Create a handler that reuses an existing gate.
+    pub fn with_gate(update_fn: F, gate: UpdateGate) -> Self {
+        Self { update_fn, gate }
+    }
+
+    /// Handle a request snapshot and dispatch the update function if allowed.
+    pub fn handle(&self, request: &UpdateRequest) -> UpdateDecision {
+        let images = request.images();
+        self.gate.dispatch(&images, |images| (self.update_fn)(images))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -123,6 +186,23 @@ mod tests {
         let images: Vec<String> = parse_image_queries::<Vec<&str>, &str>(None);
 
         assert!(images.is_empty());
+    }
+
+    #[test]
+    fn update_request_flattens_image_values_like_the_legacy_handler() {
+        let request = UpdateRequest::new("ignored body", vec!["alpha,beta", "gamma,,delta"]);
+
+        assert_eq!(request.body, "ignored body");
+        assert_eq!(
+            request.images(),
+            vec![
+                "alpha".to_string(),
+                "beta".to_string(),
+                "gamma".to_string(),
+                "".to_string(),
+                "delta".to_string(),
+            ]
+        );
     }
 
     #[test]
@@ -165,5 +245,19 @@ mod tests {
             rx.recv().expect("worker should send the image list"),
             vec!["alpha".to_string(), "beta".to_string()]
         );
+    }
+
+    #[test]
+    fn handler_uses_request_images_and_shared_gate() {
+        let called = Arc::new(AtomicBool::new(false));
+        let called_clone = Arc::clone(&called);
+        let handler = UpdateHandler::new(move |images| {
+            called_clone.store(true, Ordering::SeqCst);
+            assert_eq!(images, &["alpha".to_string(), "beta".to_string()]);
+        });
+        let request = UpdateRequest::new("payload", vec!["alpha,beta"]);
+
+        assert_eq!(handler.handle(&request), UpdateDecision::Triggered);
+        assert!(called.load(Ordering::SeqCst));
     }
 }
