@@ -10,6 +10,7 @@ use std::fmt;
 use std::time::Duration;
 
 pub mod filters;
+pub mod session;
 pub mod types;
 
 /// Shared result type for the library.
