@@ -30,6 +30,10 @@ pub const DEFAULT_STOP_TIMEOUT: Duration = Duration::from_secs(10);
     disable_help_subcommand = true
 )]
 pub struct WatchtowerCli {
+    /// Docker connection settings.
+    #[command(flatten)]
+    pub docker: DockerArgs,
+
     /// Scheduling and polling controls.
     #[command(flatten)]
     pub scheduling: SchedulingArgs,
@@ -45,6 +49,10 @@ pub struct WatchtowerCli {
     /// HTTP API options.
     #[command(flatten)]
     pub http_api: HttpApiArgs,
+
+    /// Notification and output options.
+    #[command(flatten)]
+    pub notifications: NotificationArgs,
 
     /// Logging-related switches.
     #[command(flatten)]
@@ -62,6 +70,44 @@ impl WatchtowerCli {
     pub fn try_parse_resolved() -> Result<WatchtowerConfig, WatchtowerCliError> {
         let cli = Self::try_parse()?;
         Ok(cli.try_into()?)
+    }
+}
+
+/// Docker connection settings.
+#[derive(Debug, Clone, Parser, PartialEq, Eq)]
+pub struct DockerArgs {
+    /// Docker daemon socket to connect to.
+    #[arg(
+        short = 'H',
+        long,
+        env = "DOCKER_HOST",
+        default_value = "unix:///var/run/docker.sock",
+        value_name = "HOST"
+    )]
+    pub host: String,
+
+    /// Use TLS and verify the remote Docker daemon.
+    #[arg(short = 'v', long, env = "DOCKER_TLS_VERIFY")]
+    pub tlsverify: bool,
+
+    /// API version to use by the Docker client.
+    #[arg(
+        short = 'a',
+        long = "api-version",
+        env = "DOCKER_API_VERSION",
+        default_value = "1.52",
+        value_name = "VERSION"
+    )]
+    pub api_version: String,
+}
+
+impl Default for DockerArgs {
+    fn default() -> Self {
+        Self {
+            host: "unix:///var/run/docker.sock".to_string(),
+            tlsverify: false,
+            api_version: "1.52".to_string(),
+        }
     }
 }
 
@@ -213,6 +259,347 @@ pub struct HttpApiArgs {
     pub periodic_polls: bool,
 }
 
+/// Notification and porcelain output options.
+#[derive(Debug, Clone, Parser, PartialEq, Eq, Default)]
+pub struct NotificationArgs {
+    /// Notification transports to activate.
+    #[arg(
+        short = 'n',
+        long = "notifications",
+        env = "WATCHTOWER_NOTIFICATIONS",
+        num_args = 0..,
+        value_parser = parse_notification_types,
+        value_name = "TYPE"
+    )]
+    pub types: Vec<NotificationTypeValues>,
+
+    /// Log level used by the notification subsystem.
+    #[arg(
+        long = "notifications-level",
+        env = "WATCHTOWER_NOTIFICATIONS_LEVEL",
+        default_value_t = NotificationLogLevel::Info,
+        value_enum
+    )]
+    pub level: NotificationLogLevel,
+
+    /// Delay before sending notifications.
+    #[arg(
+        long = "notifications-delay",
+        env = "WATCHTOWER_NOTIFICATIONS_DELAY",
+        value_name = "SECONDS",
+        value_parser = parse_duration
+    )]
+    pub delay: Option<Duration>,
+
+    /// Hostname used in notification titles.
+    #[arg(
+        long = "notifications-hostname",
+        env = "WATCHTOWER_NOTIFICATIONS_HOSTNAME",
+        value_name = "HOST"
+    )]
+    pub hostname: Option<String>,
+
+    /// Additional notification URLs.
+    #[arg(
+        long = "notification-url",
+        env = "WATCHTOWER_NOTIFICATION_URL",
+        num_args = 0..,
+        value_parser = parse_notification_urls,
+        value_name = "URL"
+    )]
+    pub urls: Vec<NotificationUrlValues>,
+
+    /// Use the session report as notification template data.
+    #[arg(long = "notification-report", env = "WATCHTOWER_NOTIFICATION_REPORT")]
+    pub report: bool,
+
+    /// Notification message template.
+    #[arg(
+        long = "notification-template",
+        env = "WATCHTOWER_NOTIFICATION_TEMPLATE",
+        value_name = "TPL"
+    )]
+    pub template: Option<String>,
+
+    /// Prefix tag for notification titles.
+    #[arg(
+        long = "notification-title-tag",
+        env = "WATCHTOWER_NOTIFICATION_TITLE_TAG",
+        value_name = "TAG"
+    )]
+    pub title_tag: Option<String>,
+
+    /// Do not pass a title to notification transports.
+    #[arg(long = "notification-skip-title", env = "WATCHTOWER_NOTIFICATION_SKIP_TITLE")]
+    pub skip_title: bool,
+
+    /// Write notification logs to stdout instead of stderr.
+    #[arg(long = "notification-log-stdout", env = "WATCHTOWER_NOTIFICATION_LOG_STDOUT")]
+    pub log_stdout: bool,
+
+    /// Enable porcelain output compatibility.
+    #[arg(long = "porcelain", env = "WATCHTOWER_PORCELAIN", value_enum)]
+    pub porcelain: Option<PorcelainVersion>,
+
+    /// When to warn about HEAD pull failures.
+    #[arg(
+        long = "warn-on-head-failure",
+        env = "WATCHTOWER_WARN_ON_HEAD_FAILURE",
+        default_value_t = WarnOnHeadFailure::Auto,
+        value_enum
+    )]
+    pub warn_on_head_failure: WarnOnHeadFailure,
+
+    /// Email transport settings.
+    #[command(flatten)]
+    pub email: EmailNotificationArgs,
+
+    /// Slack transport settings.
+    #[command(flatten)]
+    pub slack: SlackNotificationArgs,
+
+    /// Microsoft Teams transport settings.
+    #[command(flatten)]
+    pub msteams: TeamsNotificationArgs,
+
+    /// Gotify transport settings.
+    #[command(flatten)]
+    pub gotify: GotifyNotificationArgs,
+}
+
+/// A normalized chunk of notification transport types.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NotificationTypeValues {
+    values: Vec<String>,
+}
+
+impl NotificationTypeValues {
+    /// Consume the parsed chunk and return the normalized values.
+    pub fn into_inner(self) -> Vec<String> {
+        self.values
+    }
+}
+
+/// Notification subsystem log level.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Default)]
+#[value(rename_all = "lower")]
+pub enum NotificationLogLevel {
+    Panic,
+    Fatal,
+    Error,
+    Warn,
+    #[default]
+    Info,
+    Debug,
+}
+
+/// Supported porcelain output format versions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "lower")]
+pub enum PorcelainVersion {
+    V1,
+}
+
+impl PorcelainVersion {
+    /// Return the legacy template version string.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::V1 => "v1",
+        }
+    }
+}
+
+/// When to warn on failed registry HEAD requests.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Default)]
+#[value(rename_all = "lower")]
+pub enum WarnOnHeadFailure {
+    Always,
+    #[default]
+    Auto,
+    Never,
+}
+
+/// Email transport settings.
+#[derive(Debug, Clone, Parser, PartialEq, Eq, Default)]
+pub struct EmailNotificationArgs {
+    /// Address to send notification emails from.
+    #[arg(
+        long = "notification-email-from",
+        env = "WATCHTOWER_NOTIFICATION_EMAIL_FROM",
+        value_name = "ADDRESS"
+    )]
+    pub from: Option<String>,
+
+    /// Address to send notification emails to.
+    #[arg(
+        long = "notification-email-to",
+        env = "WATCHTOWER_NOTIFICATION_EMAIL_TO",
+        value_name = "ADDRESS"
+    )]
+    pub to: Option<String>,
+
+    /// SMTP server to send notification emails through.
+    #[arg(
+        long = "notification-email-server",
+        env = "WATCHTOWER_NOTIFICATION_EMAIL_SERVER",
+        value_name = "HOST"
+    )]
+    pub server: Option<String>,
+
+    /// SMTP server user for sending notifications.
+    #[arg(
+        long = "notification-email-server-user",
+        env = "WATCHTOWER_NOTIFICATION_EMAIL_SERVER_USER",
+        value_name = "USER"
+    )]
+    pub user: Option<String>,
+
+    /// SMTP server password for sending notifications.
+    #[arg(
+        long = "notification-email-server-password",
+        env = "WATCHTOWER_NOTIFICATION_EMAIL_SERVER_PASSWORD",
+        value_name = "PASSWORD"
+    )]
+    pub password: Option<String>,
+
+    /// SMTP server port to send notification emails through.
+    #[arg(
+        long = "notification-email-server-port",
+        env = "WATCHTOWER_NOTIFICATION_EMAIL_SERVER_PORT",
+        default_value_t = 25,
+        value_name = "PORT"
+    )]
+    pub port: u16,
+
+    /// Controls whether watchtower verifies the SMTP server certificate.
+    #[arg(
+        long = "notification-email-server-tls-skip-verify",
+        env = "WATCHTOWER_NOTIFICATION_EMAIL_SERVER_TLS_SKIP_VERIFY"
+    )]
+    pub tls_skip_verify: bool,
+
+    /// Delay before sending email notifications.
+    #[arg(
+        long = "notification-email-delay",
+        env = "WATCHTOWER_NOTIFICATION_EMAIL_DELAY",
+        value_name = "SECONDS",
+        value_parser = parse_duration
+    )]
+    pub delay: Option<Duration>,
+
+    /// Subject prefix tag for notifications via mail.
+    #[arg(
+        long = "notification-email-subjecttag",
+        env = "WATCHTOWER_NOTIFICATION_EMAIL_SUBJECTTAG",
+        value_name = "TAG"
+    )]
+    pub subject_tag: Option<String>,
+}
+
+/// Slack transport settings.
+#[derive(Debug, Clone, Parser, PartialEq, Eq, Default)]
+pub struct SlackNotificationArgs {
+    /// The Slack Hook URL to send notifications to.
+    #[arg(
+        long = "notification-slack-hook-url",
+        env = "WATCHTOWER_NOTIFICATION_SLACK_HOOK_URL",
+        value_name = "URL"
+    )]
+    pub hook_url: Option<String>,
+
+    /// Identifier used to identify this watchtower instance.
+    #[arg(
+        long = "notification-slack-identifier",
+        env = "WATCHTOWER_NOTIFICATION_SLACK_IDENTIFIER",
+        default_value = "watchtower",
+        value_name = "NAME"
+    )]
+    pub identifier: String,
+
+    /// Override the webhook's default channel.
+    #[arg(
+        long = "notification-slack-channel",
+        env = "WATCHTOWER_NOTIFICATION_SLACK_CHANNEL",
+        value_name = "CHANNEL"
+    )]
+    pub channel: Option<String>,
+
+    /// Emoji to use instead of the default icon.
+    #[arg(
+        long = "notification-slack-icon-emoji",
+        env = "WATCHTOWER_NOTIFICATION_SLACK_ICON_EMOJI",
+        value_name = "EMOJI"
+    )]
+    pub icon_emoji: Option<String>,
+
+    /// Icon image URL to use instead of the default icon.
+    #[arg(
+        long = "notification-slack-icon-url",
+        env = "WATCHTOWER_NOTIFICATION_SLACK_ICON_URL",
+        value_name = "URL"
+    )]
+    pub icon_url: Option<String>,
+}
+
+/// Microsoft Teams transport settings.
+#[derive(Debug, Clone, Parser, PartialEq, Eq, Default)]
+pub struct TeamsNotificationArgs {
+    /// The Teams webhook URL to send notifications to.
+    #[arg(
+        long = "notification-msteams-hook",
+        env = "WATCHTOWER_NOTIFICATION_MSTEAMS_HOOK_URL",
+        value_name = "URL"
+    )]
+    pub hook: Option<String>,
+
+    /// Try to include log entry data as Teams message facts.
+    #[arg(
+        long = "notification-msteams-data",
+        env = "WATCHTOWER_NOTIFICATION_MSTEAMS_USE_LOG_DATA"
+    )]
+    pub data: bool,
+}
+
+/// Gotify transport settings.
+#[derive(Debug, Clone, Parser, PartialEq, Eq, Default)]
+pub struct GotifyNotificationArgs {
+    /// The Gotify URL to send notifications to.
+    #[arg(
+        long = "notification-gotify-url",
+        env = "WATCHTOWER_NOTIFICATION_GOTIFY_URL",
+        value_name = "URL"
+    )]
+    pub url: Option<String>,
+
+    /// The Gotify application token.
+    #[arg(
+        long = "notification-gotify-token",
+        env = "WATCHTOWER_NOTIFICATION_GOTIFY_TOKEN",
+        value_name = "TOKEN"
+    )]
+    pub token: Option<String>,
+
+    /// Controls whether watchtower verifies the Gotify server certificate.
+    #[arg(
+        long = "notification-gotify-tls-skip-verify",
+        env = "WATCHTOWER_NOTIFICATION_GOTIFY_TLS_SKIP_VERIFY"
+    )]
+    pub tls_skip_verify: bool,
+}
+
+/// A normalized chunk of notification URL values.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NotificationUrlValues {
+    values: Vec<String>,
+}
+
+impl NotificationUrlValues {
+    /// Consume the parsed chunk and return the normalized values.
+    pub fn into_inner(self) -> Vec<String> {
+        self.values
+    }
+}
+
 /// Logging-related switches.
 #[derive(Debug, Clone, Copy, Parser, PartialEq, Eq, Default)]
 pub struct LoggingArgs {
@@ -286,6 +673,9 @@ pub enum LogFormat {
 /// Resolved application configuration derived from CLI and environment data.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WatchtowerConfig {
+    /// Resolved Docker connection settings.
+    pub docker: DockerConfig,
+
     /// Positional containers to include.
     pub containers: Vec<String>,
 
@@ -303,6 +693,9 @@ pub struct WatchtowerConfig {
 
     /// Resolved HTTP API mode.
     pub http_api: HttpApiConfig,
+
+    /// Resolved notification settings.
+    pub notifications: NotificationConfig,
 
     /// Resolved logging behavior.
     pub logging: LoggingConfig,
@@ -363,6 +756,74 @@ pub struct HttpApiConfig {
     pub token: Option<String>,
 }
 
+/// Resolved Docker connection settings.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DockerConfig {
+    pub host: String,
+    pub tlsverify: bool,
+    pub api_version: String,
+}
+
+/// Resolved notification settings.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NotificationConfig {
+    pub types: Vec<String>,
+    pub level: NotificationLogLevel,
+    pub delay: Option<Duration>,
+    pub hostname: Option<String>,
+    pub urls: Vec<String>,
+    pub report: bool,
+    pub template: Option<String>,
+    pub title_tag: Option<String>,
+    pub skip_title: bool,
+    pub log_stdout: bool,
+    pub porcelain: Option<PorcelainVersion>,
+    pub warn_on_head_failure: WarnOnHeadFailure,
+    pub email: EmailNotificationConfig,
+    pub slack: SlackNotificationConfig,
+    pub msteams: TeamsNotificationConfig,
+    pub gotify: GotifyNotificationConfig,
+}
+
+/// Resolved email notification settings.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EmailNotificationConfig {
+    pub from: Option<String>,
+    pub to: Option<String>,
+    pub server: Option<String>,
+    pub user: Option<String>,
+    pub password: Option<String>,
+    pub port: u16,
+    pub tls_skip_verify: bool,
+    pub delay: Option<Duration>,
+    pub subject_tag: Option<String>,
+}
+
+/// Resolved Slack notification settings.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SlackNotificationConfig {
+    pub hook_url: Option<String>,
+    pub identifier: String,
+    pub channel: Option<String>,
+    pub icon_emoji: Option<String>,
+    pub icon_url: Option<String>,
+}
+
+/// Resolved Microsoft Teams notification settings.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TeamsNotificationConfig {
+    pub hook: Option<String>,
+    pub data: bool,
+}
+
+/// Resolved Gotify notification settings.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GotifyNotificationConfig {
+    pub url: Option<String>,
+    pub token: Option<String>,
+    pub tls_skip_verify: bool,
+}
+
 /// Resolved logging configuration.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LoggingConfig {
@@ -403,10 +864,12 @@ impl TryFrom<WatchtowerCli> for WatchtowerConfig {
 
     fn try_from(cli: WatchtowerCli) -> Result<Self, Self::Error> {
         let WatchtowerCli {
+            docker,
             scheduling,
             update,
             selection,
             http_api,
+            notifications,
             logging,
             containers,
         } = cli;
@@ -415,6 +878,7 @@ impl TryFrom<WatchtowerCli> for WatchtowerConfig {
         let logging = logging.into();
 
         Ok(Self {
+            docker: docker.into(),
             containers,
             scheduling,
             update: UpdateConfig {
@@ -441,6 +905,7 @@ impl TryFrom<WatchtowerCli> for WatchtowerConfig {
                 metrics: http_api.metrics,
                 token: http_api.token,
             },
+            notifications: notifications.into(),
             logging,
         })
     }
@@ -483,6 +948,74 @@ impl From<LoggingArgs> for LoggingConfig {
             trace: args.trace,
             no_color: args.no_color,
             no_startup_message: args.no_startup_message,
+        }
+    }
+}
+
+impl From<DockerArgs> for DockerConfig {
+    fn from(args: DockerArgs) -> Self {
+        Self {
+            host: args.host,
+            tlsverify: args.tlsverify,
+            api_version: args.api_version,
+        }
+    }
+}
+
+impl From<NotificationArgs> for NotificationConfig {
+    fn from(args: NotificationArgs) -> Self {
+        let mut urls = flatten_notification_urls(args.urls);
+        let mut report = args.report;
+        let mut template = args.template;
+        let mut log_stdout = args.log_stdout;
+
+        if let Some(version) = args.porcelain {
+            urls.push("logger://".to_string());
+            report = true;
+            log_stdout = true;
+            template = Some(format!("porcelain.{}.summary-no-log", version.as_str()));
+        }
+
+        Self {
+            types: flatten_notification_types(args.types),
+            level: args.level,
+            delay: args.delay,
+            hostname: args.hostname,
+            urls,
+            report,
+            template,
+            title_tag: args.title_tag,
+            skip_title: args.skip_title,
+            log_stdout,
+            porcelain: args.porcelain,
+            warn_on_head_failure: args.warn_on_head_failure,
+            email: EmailNotificationConfig {
+                from: args.email.from,
+                to: args.email.to,
+                server: args.email.server,
+                user: args.email.user,
+                password: args.email.password,
+                port: args.email.port,
+                tls_skip_verify: args.email.tls_skip_verify,
+                delay: args.email.delay,
+                subject_tag: args.email.subject_tag,
+            },
+            slack: SlackNotificationConfig {
+                hook_url: args.slack.hook_url,
+                identifier: args.slack.identifier,
+                channel: args.slack.channel,
+                icon_emoji: args.slack.icon_emoji,
+                icon_url: args.slack.icon_url,
+            },
+            msteams: TeamsNotificationConfig {
+                hook: args.msteams.hook,
+                data: args.msteams.data,
+            },
+            gotify: GotifyNotificationConfig {
+                url: args.gotify.url,
+                token: args.gotify.token,
+                tls_skip_verify: args.gotify.tls_skip_verify,
+            },
         }
     }
 }
@@ -560,6 +1093,48 @@ fn flatten_disable_container_values(values: Vec<DisableContainerValues>) -> Vec<
     normalized
 }
 
+fn flatten_notification_types(values: Vec<NotificationTypeValues>) -> Vec<String> {
+    let mut normalized = Vec::new();
+
+    for value in values {
+        normalized.extend(value.into_inner());
+    }
+
+    normalized
+}
+
+fn flatten_notification_urls(values: Vec<NotificationUrlValues>) -> Vec<String> {
+    let mut normalized = Vec::new();
+
+    for value in values {
+        normalized.extend(value.into_inner());
+    }
+
+    normalized
+}
+
+fn parse_notification_types(input: &str) -> Result<NotificationTypeValues, String> {
+    let values = input
+        .split(|c: char| c == ',' || c.is_whitespace())
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(str::to_owned)
+        .collect();
+
+    Ok(NotificationTypeValues { values })
+}
+
+fn parse_notification_urls(input: &str) -> Result<NotificationUrlValues, String> {
+    let values = input
+        .split(|c: char| c == ',' || c.is_whitespace())
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(str::to_owned)
+        .collect();
+
+    Ok(NotificationUrlValues { values })
+}
+
 fn parse_disable_container_values(input: &str) -> Result<DisableContainerValues, String> {
     let values = input
         .split(|c: char| c == ',' || c.is_whitespace())
@@ -615,6 +1190,7 @@ mod tests {
     #[test]
     fn carries_health_check_into_resolved_config() {
         let cli = WatchtowerCli {
+            docker: DockerArgs::default(),
             scheduling: SchedulingArgs::default(),
             update: UpdateArgs {
                 health_check: true,
@@ -622,6 +1198,7 @@ mod tests {
             },
             selection: SelectionArgs::default(),
             http_api: HttpApiArgs::default(),
+            notifications: NotificationArgs::default(),
             logging: LoggingArgs::default(),
             containers: Vec::new(),
         };
@@ -631,6 +1208,39 @@ mod tests {
             .expect("config resolves");
 
         assert!(config.health_check);
+    }
+
+    #[test]
+    fn porcelain_mode_enables_logger_output_and_report_template() {
+        let cli = WatchtowerCli {
+            docker: DockerArgs::default(),
+            scheduling: SchedulingArgs::default(),
+            update: UpdateArgs::default(),
+            selection: SelectionArgs::default(),
+            http_api: HttpApiArgs::default(),
+            notifications: NotificationArgs {
+                porcelain: Some(PorcelainVersion::V1),
+                ..NotificationArgs::default()
+            },
+            logging: LoggingArgs::default(),
+            containers: Vec::new(),
+        };
+
+        let config: WatchtowerConfig = cli.try_into().expect("config resolves");
+
+        assert!(config.notifications.log_stdout);
+        assert!(config.notifications.report);
+        assert_eq!(
+            config.notifications.template.as_deref(),
+            Some("porcelain.v1.summary-no-log")
+        );
+        assert!(
+            config
+                .notifications
+                .urls
+                .iter()
+                .any(|url| url == "logger://")
+        );
     }
 }
 
