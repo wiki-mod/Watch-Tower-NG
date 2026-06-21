@@ -62,10 +62,6 @@ fn render_prometheus_metrics(metrics: &Metrics) -> String {
             "# TYPE watchtower_scans_skipped counter\n",
             "watchtower_scans_skipped {}\n",
         ),
-        snapshot.scanned,
-        snapshot.updated,
-        snapshot.failed,
-        snapshot.total,
-        snapshot.skipped,
+        snapshot.scanned, snapshot.updated, snapshot.failed, snapshot.total, snapshot.skipped,
     )
 }

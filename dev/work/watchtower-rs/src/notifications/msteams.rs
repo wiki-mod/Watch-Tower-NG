@@ -2,7 +2,7 @@
 
 use url::Url;
 
-use super::email::{encode_component, NotificationUrlError};
+use super::email::{NotificationUrlError, encode_component};
 use super::notifier::COLOR_HEX;
 
 /// Legacy notification type string for Microsoft Teams.

@@ -11,10 +11,10 @@ use thiserror::Error;
 use titlecase::titlecase;
 use tracing::{error, info};
 
-use crate::notifier::{NotificationLogLevel, NotifierSetup};
 use crate::notifications::{
     Data, NotificationEntry, StaticData, common_template, default_template, get_scheme,
 };
+use crate::notifier::{NotificationLogLevel, NotifierSetup};
 use crate::types::{ContainerReport, Report};
 
 pub const SHOUTRRR_TYPE: &str = "shoutrrr";
@@ -107,9 +107,7 @@ pub struct TracingNotificationDiagnostics;
 
 impl NotificationDiagnostics for TracingNotificationDiagnostics {
     fn template_fallback(&self, error: &str) {
-        error!(
-            "Could not use configured notification template: {error}. Using default template"
-        );
+        error!("Could not use configured notification template: {error}. Using default template");
     }
 
     fn send_failure(&self, service: &str, index: usize, error: &NotificationDeliveryError) {
@@ -339,7 +337,10 @@ impl ShoutrrrNotifier {
 
     pub fn build_message(&self, data: Data) -> TemplateResult<String> {
         let context = template_context(&data, self.legacy_template);
-        let template = self.template.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let template = self
+            .template
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         template
             .render(&context)
             .map_err(|err| format!("failed to execute template: {err}"))
@@ -353,11 +354,7 @@ impl ShoutrrrNotifier {
     }
 
     pub fn send_notification(&self, report: Option<Report>) -> Result<(), ShoutrrrNotifierError> {
-        let entries = self
-            .lock_state()
-            .entries
-            .take()
-            .unwrap_or_default();
+        let entries = self.lock_state().entries.take().unwrap_or_default();
         self.send_entries(entries, report)
     }
 
@@ -371,7 +368,9 @@ impl ShoutrrrNotifier {
 
         if let Some(worker) = worker {
             self.diagnostics.waiting_for_worker();
-            worker.join().map_err(|_| ShoutrrrNotifierError::WorkerPanicked)?;
+            worker
+                .join()
+                .map_err(|_| ShoutrrrNotifierError::WorkerPanicked)?;
         }
 
         Ok(())
@@ -466,9 +465,12 @@ impl NotifierSetup {
 }
 
 fn should_skip_entry(entry: &NotificationEntry) -> bool {
-    entry.data.as_ref().and_then(JsonValue::as_object).and_then(|data| {
-        data.get("notify").and_then(JsonValue::as_str)
-    }) == Some("no")
+    entry
+        .data
+        .as_ref()
+        .and_then(JsonValue::as_object)
+        .and_then(|data| data.get("notify").and_then(JsonValue::as_str))
+        == Some("no")
 }
 
 fn legacy_levels(level: NotificationLogLevel) -> Vec<NotificationLogLevel> {
@@ -503,9 +505,7 @@ fn build_template(input: &str, legacy: bool) -> Result<Template, String> {
 
     let mut template = Template::default();
     template.add_funcs(&legacy_funcs());
-    template
-        .parse(resolved)
-        .map_err(|err| format!("{err}"))?;
+    template.parse(resolved).map_err(|err| format!("{err}"))?;
     Ok(template)
 }
 
@@ -577,9 +577,18 @@ fn template_context(data: &Data, legacy: bool) -> Context {
 
 fn data_to_template_value(data: &Data) -> Value {
     let mut map = HashMap::new();
-    map.insert("Title".to_string(), Value::from(data.static_data.title.clone()));
-    map.insert("Host".to_string(), Value::from(data.static_data.host.clone()));
-    map.insert("StaticData".to_string(), static_data_value(&data.static_data));
+    map.insert(
+        "Title".to_string(),
+        Value::from(data.static_data.title.clone()),
+    );
+    map.insert(
+        "Host".to_string(),
+        Value::from(data.static_data.host.clone()),
+    );
+    map.insert(
+        "StaticData".to_string(),
+        static_data_value(&data.static_data),
+    );
     map.insert(
         "Entries".to_string(),
         list_value(data.entries.iter().map(entry_to_template_value)),
@@ -606,11 +615,21 @@ fn report_to_template_value(report: &Report) -> Value {
     let all = report.all();
     map.insert(
         "Scanned".to_string(),
-        list_value(report.scanned.iter().map(container_report_to_template_value)),
+        list_value(
+            report
+                .scanned
+                .iter()
+                .map(container_report_to_template_value),
+        ),
     );
     map.insert(
         "Updated".to_string(),
-        list_value(report.updated.iter().map(container_report_to_template_value)),
+        list_value(
+            report
+                .updated
+                .iter()
+                .map(container_report_to_template_value),
+        ),
     );
     map.insert(
         "Failed".to_string(),
@@ -618,7 +637,12 @@ fn report_to_template_value(report: &Report) -> Value {
     );
     map.insert(
         "Skipped".to_string(),
-        list_value(report.skipped.iter().map(container_report_to_template_value)),
+        list_value(
+            report
+                .skipped
+                .iter()
+                .map(container_report_to_template_value),
+        ),
     );
     map.insert(
         "Stale".to_string(),
@@ -647,7 +671,10 @@ fn container_report_to_template_value(report: &ContainerReport) -> Value {
         "LatestImageID".to_string(),
         id_value(&report.latest_image_id),
     );
-    map.insert("ImageName".to_string(), Value::from(report.image_name.clone()));
+    map.insert(
+        "ImageName".to_string(),
+        Value::from(report.image_name.clone()),
+    );
     map.insert(
         "Error".to_string(),
         Value::from(report.error.clone().unwrap_or_default()),
@@ -679,7 +706,8 @@ fn entry_to_template_value(entry: &NotificationEntry) -> Value {
     map.insert("Message".to_string(), Value::from(entry.message.clone()));
     map.insert(
         "Data".to_string(),
-        entry.data
+        entry
+            .data
             .as_ref()
             .map(json_to_template_value)
             .unwrap_or(Value::NoValue),
@@ -747,9 +775,15 @@ fn object_value_to_json(values: &HashMap<String, Value>) -> Result<JsonValue, St
     if values.contains_key("Entries") && values.contains_key("Title") && values.contains_key("Host")
     {
         let mut out = JsonMap::new();
-        out.insert("title".to_string(), template_value_to_json(&values["Title"])?);
+        out.insert(
+            "title".to_string(),
+            template_value_to_json(&values["Title"])?,
+        );
         out.insert("host".to_string(), template_value_to_json(&values["Host"])?);
-        out.insert("entries".to_string(), template_value_to_json(&values["Entries"])?);
+        out.insert(
+            "entries".to_string(),
+            template_value_to_json(&values["Entries"])?,
+        );
         out.insert(
             "report".to_string(),
             values
@@ -764,7 +798,10 @@ fn object_value_to_json(values: &HashMap<String, Value>) -> Result<JsonValue, St
     if values.contains_key("Level") && values.contains_key("Message") && values.contains_key("Time")
     {
         let mut out = JsonMap::new();
-        out.insert("level".to_string(), template_value_to_json(&values["Level"])?);
+        out.insert(
+            "level".to_string(),
+            template_value_to_json(&values["Level"])?,
+        );
         out.insert(
             "message".to_string(),
             template_value_to_json(&values["Message"])?,
@@ -797,7 +834,10 @@ fn object_value_to_json(values: &HashMap<String, Value>) -> Result<JsonValue, St
             ("Stale", "stale"),
             ("Fresh", "fresh"),
         ] {
-            out.insert(json_key.to_string(), template_value_to_json(&values[template_key])?);
+            out.insert(
+                json_key.to_string(),
+                template_value_to_json(&values[template_key])?,
+            );
         }
         return Ok(JsonValue::Object(out));
     }
@@ -810,10 +850,7 @@ fn object_value_to_json(values: &HashMap<String, Value>) -> Result<JsonValue, St
         && values.contains_key("State")
     {
         let mut out = JsonMap::new();
-        out.insert(
-            "id".to_string(),
-            template_short_id_to_json(&values["ID"])?,
-        );
+        out.insert("id".to_string(), template_short_id_to_json(&values["ID"])?);
         out.insert("name".to_string(), template_value_to_json(&values["Name"])?);
         out.insert(
             "currentImageId".to_string(),
@@ -827,7 +864,10 @@ fn object_value_to_json(values: &HashMap<String, Value>) -> Result<JsonValue, St
             "imageName".to_string(),
             template_value_to_json(&values["ImageName"])?,
         );
-        out.insert("state".to_string(), template_value_to_json(&values["State"])?);
+        out.insert(
+            "state".to_string(),
+            template_value_to_json(&values["State"])?,
+        );
         if let Some(error) = values.get("Error").and_then(value_as_non_empty_string) {
             out.insert("error".to_string(), JsonValue::String(error.to_string()));
         }
@@ -1147,18 +1187,31 @@ mod tests {
             ))
             .expect("json template should render");
 
-        let (all_output, json_output) = message.split_once('|').expect("all/json separator should exist");
+        let (all_output, json_output) = message
+            .split_once('|')
+            .expect("all/json separator should exist");
         assert_eq!(all_output, "updt1");
 
         let json: JsonValue = serde_json::from_str(json_output).expect("json should parse");
-        assert_eq!(json["title"], JsonValue::String("Watchtower updates on Mock".to_string()));
+        assert_eq!(
+            json["title"],
+            JsonValue::String("Watchtower updates on Mock".to_string())
+        );
         assert_eq!(json["host"], JsonValue::String("Mock".to_string()));
-        assert_eq!(json["entries"][0]["message"], JsonValue::String("foo bar".to_string()));
-        assert_eq!(json["report"]["updated"][0]["currentImageId"], JsonValue::String("01d110000000".to_string()));
-        assert!(!json["report"]
-            .as_object()
-            .expect("report should stay an object")
-            .contains_key("all"));
+        assert_eq!(
+            json["entries"][0]["message"],
+            JsonValue::String("foo bar".to_string())
+        );
+        assert_eq!(
+            json["report"]["updated"][0]["currentImageId"],
+            JsonValue::String("01d110000000".to_string())
+        );
+        assert!(
+            !json["report"]
+                .as_object()
+                .expect("report should stay an object")
+                .contains_key("all")
+        );
     }
 
     #[test]
@@ -1182,7 +1235,14 @@ mod tests {
             .expect("empty batch should succeed");
         notifier.close().expect("close should succeed");
 
-        assert!(notifier.router_as::<RecordingRouter>().sent.lock().unwrap().is_empty());
+        assert!(
+            notifier
+                .router_as::<RecordingRouter>()
+                .sent
+                .lock()
+                .unwrap()
+                .is_empty()
+        );
         assert_eq!(*diagnostics.empty_skips.lock().unwrap(), 0);
     }
 
@@ -1201,13 +1261,20 @@ mod tests {
 
         notifier.start_async_delivery();
         notifier.start_notification();
-        notifier.fire(sample_entry("ContainrrrVPN")).expect("fire should succeed");
+        notifier
+            .fire(sample_entry("ContainrrrVPN"))
+            .expect("fire should succeed");
         notifier
             .send_notification(None)
             .expect("send notification should succeed");
         notifier.close().expect("close should succeed");
 
-        let sent = notifier.router_as::<RecordingRouter>().sent.lock().unwrap().clone();
+        let sent = notifier
+            .router_as::<RecordingRouter>()
+            .sent
+            .lock()
+            .unwrap()
+            .clone();
         assert_eq!(sent.len(), 1);
         assert_eq!(sent[0].0, "ContainrrrVPN\n");
     }
@@ -1244,7 +1311,14 @@ mod tests {
             .expect("send notification should succeed");
         notifier.close().expect("close should succeed");
 
-        assert!(notifier.router_as::<RecordingRouter>().sent.lock().unwrap().is_empty());
+        assert!(
+            notifier
+                .router_as::<RecordingRouter>()
+                .sent
+                .lock()
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
@@ -1260,11 +1334,18 @@ mod tests {
             RecordingDiagnostics::default(),
         );
 
-        notifier.fire(sample_entry("foo bar")).expect("fire should succeed");
+        notifier
+            .fire(sample_entry("foo bar"))
+            .expect("fire should succeed");
         notifier.start_async_delivery();
         notifier.close().expect("close should succeed");
 
-        let sent = notifier.router_as::<RecordingRouter>().sent.lock().unwrap().clone();
+        let sent = notifier
+            .router_as::<RecordingRouter>()
+            .sent
+            .lock()
+            .unwrap()
+            .clone();
         assert_eq!(sent.len(), 1);
         assert_eq!(sent[0].0, "foo bar\n");
     }
@@ -1283,7 +1364,9 @@ mod tests {
         );
 
         notifier.start_async_delivery();
-        notifier.fire(sample_entry("foo bar")).expect("fire should succeed");
+        notifier
+            .fire(sample_entry("foo bar"))
+            .expect("fire should succeed");
         notifier.close().expect("close should succeed");
 
         assert_eq!(
@@ -1313,7 +1396,9 @@ mod tests {
 
         notifier.start_async_delivery();
         notifier.start_notification();
-        notifier.fire(sample_entry("foo bar")).expect("fire should succeed");
+        notifier
+            .fire(sample_entry("foo bar"))
+            .expect("fire should succeed");
         notifier
             .send_notification(None)
             .expect("send notification should succeed");
@@ -1324,7 +1409,12 @@ mod tests {
         assert!(sent_rx.recv_timeout(Duration::from_millis(50)).is_err());
         unlock_tx.send(()).expect("unlock should be sent");
         assert!(sent_rx.recv_timeout(Duration::from_secs(1)).is_ok());
-        assert!(close_handle.join().expect("close thread should join").is_ok());
+        assert!(
+            close_handle
+                .join()
+                .expect("close thread should join")
+                .is_ok()
+        );
         assert_eq!(*diagnostics.waiting_calls.lock().unwrap(), 1);
     }
 
@@ -1378,11 +1468,7 @@ mod tests {
             type Router = RecordingRouter;
             type Error = std::io::Error;
 
-            fn create(
-                &self,
-                urls: &[String],
-                _stdout: bool,
-            ) -> Result<Self::Router, Self::Error> {
+            fn create(&self, urls: &[String], _stdout: bool) -> Result<Self::Router, Self::Error> {
                 assert_eq!(urls, ["logger://"]);
                 Ok(RecordingRouter::default())
             }

@@ -42,7 +42,9 @@ fn normalize_image_reference(image_ref: &str) -> Result<&str> {
 }
 
 fn registry_domain(image_ref: &str) -> Result<&str> {
-    let name = image_ref.split_once('@').map_or(image_ref, |(name, _)| name);
+    let name = image_ref
+        .split_once('@')
+        .map_or(image_ref, |(name, _)| name);
 
     let Some((first_segment, _)) = name.split_once('/') else {
         return Ok(DEFAULT_REGISTRY_DOMAIN);

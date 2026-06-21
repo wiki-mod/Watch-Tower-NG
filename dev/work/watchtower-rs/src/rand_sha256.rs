@@ -60,9 +60,11 @@ mod tests {
 
         assert_eq!(value.len(), SHA256_PREFIX_LEN + SHA256_HEX_BYTES * 2);
         assert!(value.starts_with(SHA256_PREFIX));
-        assert!(value[SHA256_PREFIX_LEN..]
-            .chars()
-            .all(|ch| ch.is_ascii_hexdigit() && !ch.is_ascii_uppercase()));
+        assert!(
+            value[SHA256_PREFIX_LEN..]
+                .chars()
+                .all(|ch| ch.is_ascii_hexdigit() && !ch.is_ascii_uppercase())
+        );
     }
 
     #[test]
@@ -70,6 +72,10 @@ mod tests {
         let value = generate_random_sha256();
 
         assert_eq!(value.len(), SHA256_HEX_BYTES * 2);
-        assert!(value.chars().all(|ch| ch.is_ascii_hexdigit() && !ch.is_ascii_uppercase()));
+        assert!(
+            value
+                .chars()
+                .all(|ch| ch.is_ascii_hexdigit() && !ch.is_ascii_uppercase())
+        );
     }
 }

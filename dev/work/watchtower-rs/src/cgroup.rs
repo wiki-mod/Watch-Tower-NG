@@ -18,9 +18,13 @@ fn docker_container_pattern() -> &'static Regex {
 }
 
 /// Get the running container ID from the current process cgroup information.
-/// Returns None if the process is not running in a container or if cgroup cannot be read.
+/// Returns None if the process is not running in a container.
+/// If cgroup cannot be read, treats it as an empty string for pattern matching.
 pub fn get_running_container_id() -> Option<ContainerID> {
-    let file = fs::read_to_string(format!("/proc/{}/cgroup", process::id())).ok()?;
+    let file = match fs::read_to_string(format!("/proc/{}/cgroup", process::id())) {
+        Ok(content) => content,
+        Err(_) => String::new(),
+    };
     get_running_container_id_from_string(&file)
 }
 

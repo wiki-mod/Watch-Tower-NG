@@ -14,31 +14,31 @@ use std::time::Duration;
 use crate::container::Container;
 use crate::docker_client::DockerCliAdapter;
 
-pub mod filters;
 pub mod actions;
 pub mod api;
 pub mod api_metrics;
 pub mod api_update;
 pub mod cgroup;
+pub mod cli;
 pub mod container;
 pub mod docker_client;
+pub mod filters;
 pub mod flags;
-pub mod cli;
 pub mod lifecycle;
-pub mod metrics;
 pub mod meta;
+pub mod metrics;
+pub mod notifications;
 pub mod notifier;
 pub mod notify_upgrade;
-pub mod notifications;
-pub mod startup;
-pub mod util;
 pub mod rand_name;
 pub mod rand_sha256;
-pub mod wait;
-pub mod sorter;
-pub mod session;
 pub mod registry;
+pub mod session;
+pub mod sorter;
+pub mod startup;
 pub mod types;
+pub mod util;
+pub mod wait;
 
 /// Shared result type for the library.
 pub type Result<T> = std::result::Result<T, Error>;
@@ -51,10 +51,7 @@ pub enum Error {
     /// The health-check flag was passed to the main process.
     HealthCheckOnMainProcess,
     /// A runtime-dependent root phase cannot proceed yet.
-    RuntimeAdapterMissing {
-        phase: RootPhase,
-        detail: String,
-    },
+    RuntimeAdapterMissing { phase: RootPhase, detail: String },
     /// The HTTP API wiring itself is invalid.
     HttpApi(crate::api::ApiError),
 }
@@ -266,9 +263,7 @@ impl AppConfig {
 
         if let Some(scope) = self.scope.as_deref() {
             if scope.trim().is_empty() {
-                return Err(Error::InvalidConfig(
-                    "scope must not be empty".to_string(),
-                ));
+                return Err(Error::InvalidConfig("scope must not be empty".to_string()));
             }
         }
 
@@ -499,10 +494,10 @@ impl WatchtowerApp {
 
     fn run_multiple_instance_protection_phase(&self, plan: &RootExecutionPlan) -> Result<()> {
         let client = DockerCliAdapter::new();
-        let containers = self.filtered_watchtower_containers(&client, RootPhase::MultipleInstanceProtection)?;
+        let containers =
+            self.filtered_watchtower_containers(&client, RootPhase::MultipleInstanceProtection)?;
 
-        if self.watchtower_cleanup_plan(&containers).is_none()
-        {
+        if self.watchtower_cleanup_plan(&containers).is_none() {
             return Ok(());
         }
 
@@ -548,11 +543,7 @@ impl WatchtowerApp {
         Error::RuntimeAdapterMissing { phase, detail }
     }
 
-    fn filtered_runtime_containers<C>(
-        &self,
-        client: &C,
-        phase: RootPhase,
-    ) -> Result<Vec<Container>>
+    fn filtered_runtime_containers<C>(&self, client: &C, phase: RootPhase) -> Result<Vec<Container>>
     where
         C: crate::lifecycle::LifecycleClient,
         C::Error: fmt::Display,
@@ -589,7 +580,12 @@ impl WatchtowerApp {
     {
         let mut filter: crate::filters::Filter<'_, Container> =
             Box::new(crate::filters::watchtower_only::<Container>);
-        if let Some(scope) = self.config.scope.as_deref().filter(|scope| !scope.is_empty()) {
+        if let Some(scope) = self
+            .config
+            .scope
+            .as_deref()
+            .filter(|scope| !scope.is_empty())
+        {
             filter = crate::filters::filter_by_scope(scope, filter);
         }
 
@@ -877,21 +873,30 @@ mod tests {
                 "watchtower-old",
                 "watchtower-old",
                 "2024-06-18T12:00:00Z",
-                &[("com.centurylinklabs.watchtower", "true"), ("com.centurylinklabs.watchtower.scope", "prod")],
+                &[
+                    ("com.centurylinklabs.watchtower", "true"),
+                    ("com.centurylinklabs.watchtower.scope", "prod"),
+                ],
                 &[],
             ),
             runtime_container(
                 "watchtower-new",
                 "watchtower-new",
                 "2024-06-19T12:00:00Z",
-                &[("com.centurylinklabs.watchtower", "true"), ("com.centurylinklabs.watchtower.scope", "prod")],
+                &[
+                    ("com.centurylinklabs.watchtower", "true"),
+                    ("com.centurylinklabs.watchtower.scope", "prod"),
+                ],
                 &[],
             ),
             runtime_container(
                 "watchtower-other",
                 "watchtower-other",
                 "2024-06-19T13:00:00Z",
-                &[("com.centurylinklabs.watchtower", "true"), ("com.centurylinklabs.watchtower.scope", "dev")],
+                &[
+                    ("com.centurylinklabs.watchtower", "true"),
+                    ("com.centurylinklabs.watchtower.scope", "dev"),
+                ],
                 &[],
             ),
         ]);
@@ -970,7 +975,10 @@ mod tests {
                 "legacy /v1/update wiring needs a shared root update executor adapter, such as `Fn(&[String]) -> Result<Option<crate::metrics::Metric>, String>`, so run_once, the scheduler, and the HTTP API all call the same Docker-backed update path with metrics emission"
             )
         );
-        assert!(plan.shared_runtime.update_lock_shared_between_scheduler_and_api);
+        assert!(
+            plan.shared_runtime
+                .update_lock_shared_between_scheduler_and_api
+        );
         assert!(plan.shared_runtime.shutdown_waits_for_running_update);
     }
 

@@ -18,10 +18,10 @@ pub trait Notifier {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::container::ContainerID;
     use super::super::container::ImageID;
     use super::super::report::ContainerReport;
+    use super::*;
     use std::cell::{Cell, RefCell};
 
     struct MockNotifier {

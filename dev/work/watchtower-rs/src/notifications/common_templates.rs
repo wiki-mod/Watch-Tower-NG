@@ -2,7 +2,10 @@
 
 /// The legacy provider templates bundled with Watchtower.
 pub const COMMON_TEMPLATES: &[(&str, &str)] = &[
-    ("default-legacy", "{{range .}}{{.Message}}{{println}}{{end}}"),
+    (
+        "default-legacy",
+        "{{range .}}{{.Message}}{{println}}{{end}}",
+    ),
     (
         "default",
         r#"
@@ -26,8 +29,7 @@ pub const COMMON_TEMPLATES: &[(&str, &str)] = &[
   {{- end -}}
 {{- else -}}
   {{range .Entries -}}{{.Message}}{{"\n"}}{{- end -}}
-{{- end -}}
-"#,
+{{- end -}}"#,
     ),
     (
         "porcelain.v1.summary-no-log",
@@ -39,8 +41,7 @@ pub const COMMON_TEMPLATES: &[(&str, &str)] = &[
   {{- else -}}
     no containers matched filter
   {{- end -}}
-{{- end -}}
-"#,
+{{- end -}}"#,
     ),
     ("json.v1", "{{ . | ToJSON }}"),
 ];

@@ -15,8 +15,9 @@ use crate::cli::{NotificationArgs, WatchtowerCli};
 use watchtower_rs::cgroup;
 use watchtower_rs::notifications::get_scheme;
 use watchtower_rs::notifier::{
-    new_notifier, EmailNotificationSettings, GotifyNotificationSettings, NotificationLogLevel as LegacyNotificationLogLevel,
-    NotifierError, NotifierInput, SlackNotificationSettings, TeamsNotificationSettings,
+    EmailNotificationSettings, GotifyNotificationSettings,
+    NotificationLogLevel as LegacyNotificationLogLevel, NotifierError, NotifierInput,
+    SlackNotificationSettings, TeamsNotificationSettings, new_notifier,
 };
 
 const OUTPUT_COPY_NAME: &str = "./watchtower-notifications.env";
@@ -30,9 +31,7 @@ pub async fn run(args: Vec<String>) -> Result<()> {
 }
 
 async fn run_notify_upgrade(args: Vec<String>) -> Result<()> {
-    let cli = WatchtowerCli::try_parse_from(
-        std::iter::once("watchtower".to_string()).chain(args),
-    )?;
+    let cli = WatchtowerCli::try_parse_from(std::iter::once("watchtower".to_string()).chain(args))?;
 
     let urls = build_notification_urls(&cli.notifications)?;
 
@@ -42,7 +41,10 @@ async fn run_notify_upgrade(args: Vec<String>) -> Result<()> {
     ));
 
     let out_file = create_temp_env_file()?;
-    logf(format!("Writing notification URLs to {}", out_file.display()));
+    logf(format!(
+        "Writing notification URLs to {}",
+        out_file.display()
+    ));
     logf("");
 
     write_notification_env(&out_file, &urls);
@@ -128,17 +130,14 @@ fn build_notification_urls(args: &NotificationArgs) -> Result<Vec<String>> {
 
 fn notifier_blocker(err: NotifierError) -> anyhow::Error {
     match err {
-        NotifierError::InvalidNotificationLevel(level) => anyhow::anyhow!(
-            "notify-upgrade notifier bridge rejected notification level `{level}`"
-        ),
+        NotifierError::InvalidNotificationLevel(level) => {
+            anyhow::anyhow!("notify-upgrade notifier bridge rejected notification level `{level}`")
+        }
         NotifierError::UnknownNotificationType(notif_type) => anyhow::anyhow!(
             "notify-upgrade notifier bridge rejected notification type `{notif_type}`"
         ),
-        NotifierError::NotificationUrl(source) => {
-            anyhow::Error::new(source).context(
-                "notify-upgrade notifier bridge failed to synthesize a notification URL",
-            )
-        }
+        NotifierError::NotificationUrl(source) => anyhow::Error::new(source)
+            .context("notify-upgrade notifier bridge failed to synthesize a notification URL"),
     }
 }
 
@@ -176,7 +175,9 @@ fn create_temp_env_file() -> Result<PathBuf> {
         }
     }
 
-    Err(anyhow::anyhow!("failed to create a unique temporary env file"))
+    Err(anyhow::anyhow!(
+        "failed to create a unique temporary env file"
+    ))
 }
 
 fn write_notification_env(path: &Path, urls: &[String]) {

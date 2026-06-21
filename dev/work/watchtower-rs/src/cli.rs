@@ -113,7 +113,10 @@ pub fn execute() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn build_runtime_config(config: WatchtowerConfig, lifecycle_hooks: bool) -> watchtower_rs::AppConfig {
+fn build_runtime_config(
+    config: WatchtowerConfig,
+    lifecycle_hooks: bool,
+) -> watchtower_rs::AppConfig {
     let WatchtowerConfig {
         containers,
         scheduling,
@@ -437,11 +440,17 @@ pub struct NotificationArgs {
     pub title_tag: Option<String>,
 
     /// Do not pass a title to notification transports.
-    #[arg(long = "notification-skip-title", env = "WATCHTOWER_NOTIFICATION_SKIP_TITLE")]
+    #[arg(
+        long = "notification-skip-title",
+        env = "WATCHTOWER_NOTIFICATION_SKIP_TITLE"
+    )]
     pub skip_title: bool,
 
     /// Write notification logs to stdout instead of stderr.
-    #[arg(long = "notification-log-stdout", env = "WATCHTOWER_NOTIFICATION_LOG_STDOUT")]
+    #[arg(
+        long = "notification-log-stdout",
+        env = "WATCHTOWER_NOTIFICATION_LOG_STDOUT"
+    )]
     pub log_stdout: bool,
 
     /// Enable porcelain output compatibility.
@@ -1315,24 +1324,38 @@ mod tests {
         };
 
         assert_eq!(base.effective_level(), LogLevel::Warn);
-        assert_eq!((LoggingArgs { debug: true, ..base }).effective_level(), LogLevel::Debug);
-        assert_eq!((LoggingArgs { trace: true, ..base }).effective_level(), LogLevel::Trace);
+        assert_eq!(
+            (LoggingArgs {
+                debug: true,
+                ..base
+            })
+            .effective_level(),
+            LogLevel::Debug
+        );
+        assert_eq!(
+            (LoggingArgs {
+                trace: true,
+                ..base
+            })
+            .effective_level(),
+            LogLevel::Trace
+        );
     }
 
     #[test]
     fn parses_trace_notification_log_level_from_cli() {
-        let level =
-            NotificationLogLevel::from_str("trace", false).expect("trace notification level should parse");
+        let level = NotificationLogLevel::from_str("trace", false)
+            .expect("trace notification level should parse");
 
         assert_eq!(level, NotificationLogLevel::Trace);
     }
 
     #[test]
     fn parses_debug_and_trace_notification_log_levels_distinctly() {
-        let debug =
-            NotificationLogLevel::from_str("debug", false).expect("debug notification level should parse");
-        let trace =
-            NotificationLogLevel::from_str("trace", false).expect("trace notification level should parse");
+        let debug = NotificationLogLevel::from_str("debug", false)
+            .expect("debug notification level should parse");
+        let trace = NotificationLogLevel::from_str("trace", false)
+            .expect("trace notification level should parse");
 
         assert_eq!(debug, NotificationLogLevel::Debug);
         assert_eq!(trace, NotificationLogLevel::Trace);
@@ -1356,9 +1379,7 @@ mod tests {
             containers: Vec::new(),
         };
 
-        let config: WatchtowerConfig = cli
-            .try_into()
-            .expect("config resolves");
+        let config: WatchtowerConfig = cli.try_into().expect("config resolves");
 
         assert!(config.health_check);
     }
@@ -1386,11 +1407,20 @@ mod tests {
     #[test]
     fn resolves_secret_file_references_for_http_and_notifications() {
         let http_token = write_temp_file("http-token", "secret-token\n");
-        let slack_hook = write_temp_file("slack-hook", "https://hooks.slack.com/services/AAA/BBB/CCC\n");
-        let msteams_hook = write_temp_file("msteams-hook", "https://outlook.office.com/webhook/aaa/IncomingWebhook/bbb/ccc\n");
+        let slack_hook = write_temp_file(
+            "slack-hook",
+            "https://hooks.slack.com/services/AAA/BBB/CCC\n",
+        );
+        let msteams_hook = write_temp_file(
+            "msteams-hook",
+            "https://outlook.office.com/webhook/aaa/IncomingWebhook/bbb/ccc\n",
+        );
         let gotify_url = write_temp_file("gotify-url", "https://gotify.local/\n");
         let gotify_token = write_temp_file("gotify-token", "gotify-secret\n");
-        let notification_urls = write_temp_file("notification-urls", "https://example.test/first\n\nhttps://example.test/second\n");
+        let notification_urls = write_temp_file(
+            "notification-urls",
+            "https://example.test/first\n\nhttps://example.test/second\n",
+        );
         let email_password = write_temp_file("email-password", "mail-secret\n");
 
         let cli = WatchtowerCli {
@@ -1570,7 +1600,10 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("system time should be after unix epoch")
             .as_nanos();
-        path.push(format!("watchtower-rs-{name}-{}-{stamp}.txt", std::process::id()));
+        path.push(format!(
+            "watchtower-rs-{name}-{}-{stamp}.txt",
+            std::process::id()
+        ));
         fs::write(&path, content).expect("temp file should be written");
         path
     }
@@ -1646,12 +1679,10 @@ mod tests {
     fn parse_cli_documented_args() -> Vec<DocumentedCliArg> {
         let field_re =
             Regex::new(r"^\s*pub\s+([a-zA-Z0-9_]+)\s*:").expect("field regex should compile");
-        let short_re =
-            Regex::new(r#"short\s*=\s*'([^'])'"#).expect("short regex should compile");
+        let short_re = Regex::new(r#"short\s*=\s*'([^'])'"#).expect("short regex should compile");
         let long_named_re =
             Regex::new(r#"long\s*=\s*"([^"]+)""#).expect("long regex should compile");
-        let env_re =
-            Regex::new(r#"env\s*=\s*"([^"]+)""#).expect("env regex should compile");
+        let env_re = Regex::new(r#"env\s*=\s*"([^"]+)""#).expect("env regex should compile");
 
         let mut args = Vec::new();
         let mut pending_arg_attr = String::new();

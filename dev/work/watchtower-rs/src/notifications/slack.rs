@@ -4,9 +4,9 @@ use std::sync::OnceLock;
 
 use regex::Regex;
 
-use super::email::{encode_component, NotificationUrlError};
-use super::notifier::COLOR_INT;
+use super::email::{NotificationUrlError, encode_component};
 use super::notifier::COLOR_HEX;
+use super::notifier::COLOR_INT;
 
 /// Notification settings for Slack-compatible hooks.
 #[derive(Debug, Clone, PartialEq, Eq)]

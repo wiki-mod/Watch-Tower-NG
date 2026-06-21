@@ -8,7 +8,7 @@
 
 use std::time::Duration;
 
-use crate::{filters, meta, AppConfig};
+use crate::{AppConfig, filters, meta};
 
 /// Build the legacy startup message sequence for a resolved configuration.
 pub fn build_startup_messages(config: &AppConfig) -> Vec<String> {
@@ -37,7 +37,9 @@ pub fn build_startup_messages(config: &AppConfig) -> Vec<String> {
 
     match (&config.schedule, config.interval) {
         (Some(schedule), _) => {
-            lines.push(format!("Scheduling updates with cron expression {schedule}."));
+            lines.push(format!(
+                "Scheduling updates with cron expression {schedule}."
+            ));
         }
         (None, Some(interval)) if interval > Duration::ZERO => {
             lines.push(format!(
@@ -107,7 +109,11 @@ pub fn format_duration(duration: Duration) -> String {
         parts.push(format!("{seconds} seconds"));
     }
 
-    parts.into_iter().filter(|part| !part.is_empty()).collect::<Vec<_>>().join(", ")
+    parts
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 #[cfg(test)]
@@ -131,7 +137,10 @@ mod tests {
     #[test]
     fn format_duration_matches_legacy_style() {
         assert_eq!(format_duration(Duration::from_secs(1)), "1 second");
-        assert_eq!(format_duration(Duration::from_secs(61)), "1 minute, 1 second");
+        assert_eq!(
+            format_duration(Duration::from_secs(61)),
+            "1 minute, 1 second"
+        );
         assert_eq!(
             format_duration(Duration::from_secs(3661)),
             "1 hour, 1 minute, 1 second"
@@ -144,6 +153,10 @@ mod tests {
 
         assert_eq!(messages[1], "Using notifications: email, slack");
         assert_eq!(messages[2], "Only checking containers in scope \"prod\"");
-        assert!(messages.iter().any(|message| message == "The HTTP API is enabled at :8080."));
+        assert!(
+            messages
+                .iter()
+                .any(|message| message == "The HTTP API is enabled at :8080.")
+        );
     }
 }

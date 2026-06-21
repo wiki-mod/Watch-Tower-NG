@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 
-use serde_json::{Map, Value, json};
 use crate::types::{ContainerReport, Report};
+use serde_json::{Map, Value, json};
 
 /// Static notification fields that are resolved once per notifier instance.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -210,8 +210,8 @@ mod tests {
 
     #[test]
     fn data_json_matches_legacy_shape() {
-        use serde_json::json;
         use serde_json::Value;
+        use serde_json::json;
 
         let expected = json!({
             "entries": [
@@ -327,32 +327,100 @@ mod tests {
             )],
             Some(Report {
                 scanned: vec![
-                    make_report("c79110000000", "updt1", "01d110000000", "d0a110000000", "mock/updt1:latest", None, "Updated"),
-                    make_report("c79120000000", "updt2", "01d120000000", "d0a120000000", "mock/updt2:latest", None, "Updated"),
-                    make_report("c79210000000", "fail1", "01d210000000", "d0a210000000", "mock/fail1:latest", Some("accidentally the whole container"), "Failed"),
-                    make_report("c79310000000", "frsh1", "01d310000000", "01d310000000", "mock/frsh1:latest", None, "Fresh"),
+                    make_report(
+                        "c79110000000",
+                        "updt1",
+                        "01d110000000",
+                        "d0a110000000",
+                        "mock/updt1:latest",
+                        None,
+                        "Updated",
+                    ),
+                    make_report(
+                        "c79120000000",
+                        "updt2",
+                        "01d120000000",
+                        "d0a120000000",
+                        "mock/updt2:latest",
+                        None,
+                        "Updated",
+                    ),
+                    make_report(
+                        "c79210000000",
+                        "fail1",
+                        "01d210000000",
+                        "d0a210000000",
+                        "mock/fail1:latest",
+                        Some("accidentally the whole container"),
+                        "Failed",
+                    ),
+                    make_report(
+                        "c79310000000",
+                        "frsh1",
+                        "01d310000000",
+                        "01d310000000",
+                        "mock/frsh1:latest",
+                        None,
+                        "Fresh",
+                    ),
                 ],
                 updated: vec![
-                    make_report("c79110000000", "updt1", "01d110000000", "d0a110000000", "mock/updt1:latest", None, "Updated"),
-                    make_report("c79120000000", "updt2", "01d120000000", "d0a120000000", "mock/updt2:latest", None, "Updated"),
+                    make_report(
+                        "c79110000000",
+                        "updt1",
+                        "01d110000000",
+                        "d0a110000000",
+                        "mock/updt1:latest",
+                        None,
+                        "Updated",
+                    ),
+                    make_report(
+                        "c79120000000",
+                        "updt2",
+                        "01d120000000",
+                        "d0a120000000",
+                        "mock/updt2:latest",
+                        None,
+                        "Updated",
+                    ),
                 ],
-                failed: vec![
-                    make_report("c79210000000", "fail1", "01d210000000", "d0a210000000", "mock/fail1:latest", Some("accidentally the whole container"), "Failed"),
-                ],
-                skipped: vec![
-                    make_report("c79410000000", "skip1", "01d410000000", "01d410000000", "mock/skip1:latest", Some("unpossible"), "Skipped"),
-                ],
+                failed: vec![make_report(
+                    "c79210000000",
+                    "fail1",
+                    "01d210000000",
+                    "d0a210000000",
+                    "mock/fail1:latest",
+                    Some("accidentally the whole container"),
+                    "Failed",
+                )],
+                skipped: vec![make_report(
+                    "c79410000000",
+                    "skip1",
+                    "01d410000000",
+                    "01d410000000",
+                    "mock/skip1:latest",
+                    Some("unpossible"),
+                    "Skipped",
+                )],
                 stale: vec![],
-                fresh: vec![
-                    make_report("c79310000000", "frsh1", "01d310000000", "01d310000000", "mock/frsh1:latest", None, "Fresh"),
-                ],
+                fresh: vec![make_report(
+                    "c79310000000",
+                    "frsh1",
+                    "01d310000000",
+                    "01d310000000",
+                    "mock/frsh1:latest",
+                    None,
+                    "Fresh",
+                )],
             }),
         );
 
         assert_eq!(data.to_json_value(), expected);
         assert_eq!(
             serde_json::from_str::<Value>(
-                &data.to_json_string().expect("json serialization should succeed"),
+                &data
+                    .to_json_string()
+                    .expect("json serialization should succeed"),
             )
             .expect("serialized json should parse"),
             expected
@@ -361,8 +429,8 @@ mod tests {
 
     #[test]
     fn data_json_uses_null_report_and_preserves_entry_payloads() {
-        use serde_json::json;
         use serde_json::Value;
+        use serde_json::json;
 
         let data = Data::new(
             StaticData {

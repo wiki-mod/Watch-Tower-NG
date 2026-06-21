@@ -29,7 +29,8 @@ mod tests {
         fn get_url(
             &self,
             _command: &clap::Command,
-        ) -> std::result::Result<String, Box<dyn std::error::Error + Send + Sync + 'static>> {
+        ) -> std::result::Result<String, Box<dyn std::error::Error + Send + Sync + 'static>>
+        {
             Ok("slack://watchtower".to_string())
         }
     }

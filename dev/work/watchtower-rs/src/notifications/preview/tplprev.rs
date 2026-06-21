@@ -56,10 +56,7 @@ fn data_to_value(data: &PreviewData) -> Value {
             let mut entry_map = HashMap::new();
             entry_map.insert("message".to_string(), Value::from(entry.message.clone()));
             entry_map.insert("level".to_string(), Value::from(entry.level.as_str()));
-            entry_map.insert(
-                "time".to_string(),
-                Value::from(entry.time.to_string()),
-            );
+            entry_map.insert("time".to_string(), Value::from(entry.time.to_string()));
             Value::from(entry_map)
         })
         .collect();
@@ -68,8 +65,14 @@ fn data_to_value(data: &PreviewData) -> Value {
 
     // Static data
     let mut static_map = HashMap::new();
-    static_map.insert("title".to_string(), Value::from(data.static_data.title.clone()));
-    static_map.insert("host".to_string(), Value::from(data.static_data.host.clone()));
+    static_map.insert(
+        "title".to_string(),
+        Value::from(data.static_data.title.clone()),
+    );
+    static_map.insert(
+        "host".to_string(),
+        Value::from(data.static_data.host.clone()),
+    );
     map.insert("StaticData".to_string(), Value::from(static_map));
 
     // Report data (if present)
@@ -206,9 +209,7 @@ fn to_lower(args: &[Value]) -> Result<Value, FuncError> {
 /// Convert a string value to title case.
 #[allow(dead_code)]
 fn to_title(args: &[Value]) -> Result<Value, FuncError> {
-    map_single_string("Title", args, |value| {
-        titlecase::titlecase(&value)
-    })
+    map_single_string("Title", args, |value| titlecase::titlecase(&value))
 }
 
 /// Apply a string transformation to a single string argument.
@@ -222,8 +223,8 @@ fn map_single_string(
         return Err(FuncError::ExactlyXArgs(name.into(), 1));
     }
 
-    let value: String = go_template::from_value(&args[0])
-        .ok_or(FuncError::UnableToConvertFromValue)?;
+    let value: String =
+        go_template::from_value(&args[0]).ok_or(FuncError::UnableToConvertFromValue)?;
     Ok(Value::from(map(value)))
 }
 

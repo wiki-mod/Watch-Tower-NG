@@ -10,8 +10,10 @@ pub trait LifecycleClient {
     type Error;
 
     fn list_containers(&self) -> std::result::Result<Vec<Container>, Self::Error>;
-    fn get_container(&self, container_id: &ContainerID)
-        -> std::result::Result<Container, Self::Error>;
+    fn get_container(
+        &self,
+        container_id: &ContainerID,
+    ) -> std::result::Result<Container, Self::Error>;
     fn execute_command(
         &self,
         container_id: &ContainerID,
@@ -76,7 +78,10 @@ pub fn execute_post_checks<C: LifecycleClient>(
 pub fn execute_pre_check_command<C: LifecycleClient>(client: &C, container: &Container) {
     let command = container.get_lifecycle_pre_check_command();
     if command.is_empty() {
-        debug!(container = container.name(), "No pre-check command supplied. Skipping");
+        debug!(
+            container = container.name(),
+            "No pre-check command supplied. Skipping"
+        );
         return;
     }
 
@@ -94,11 +99,17 @@ pub fn execute_pre_check_command<C: LifecycleClient>(client: &C, container: &Con
 pub fn execute_post_check_command<C: LifecycleClient>(client: &C, container: &Container) {
     let command = container.get_lifecycle_post_check_command();
     if command.is_empty() {
-        debug!(container = container.name(), "No post-check command supplied. Skipping");
+        debug!(
+            container = container.name(),
+            "No post-check command supplied. Skipping"
+        );
         return;
     }
 
-    debug!(container = container.name(), "Executing post-check command.");
+    debug!(
+        container = container.name(),
+        "Executing post-check command."
+    );
     if client
         .execute_command(container.id(), &command, CHECK_TIMEOUT_MINUTES)
         .is_err()
@@ -117,7 +128,10 @@ pub fn execute_pre_update_command<C: LifecycleClient>(
     let command = container.get_lifecycle_pre_update_command();
 
     if command.is_empty() {
-        debug!(container = container.name(), "No pre-update command supplied. Skipping");
+        debug!(
+            container = container.name(),
+            "No pre-update command supplied. Skipping"
+        );
         return Ok(HookOutcome::Skipped(HookSkipReason::MissingCommand));
     }
 
@@ -133,17 +147,17 @@ pub fn execute_pre_update_command<C: LifecycleClient>(
         }));
     }
 
-    debug!(container = container.name(), "Executing pre-update command.");
+    debug!(
+        container = container.name(),
+        "Executing pre-update command."
+    );
     let skip_update = client.execute_command(container.id(), &command, timeout)?;
     Ok(HookOutcome::Executed { skip_update })
 }
 
 /// ExecutePostUpdateCommand tries to run the post-update lifecycle hook for a
 /// single container.
-pub fn execute_post_update_command<C: LifecycleClient>(
-    client: &C,
-    new_container_id: &ContainerID,
-) {
+pub fn execute_post_update_command<C: LifecycleClient>(client: &C, new_container_id: &ContainerID) {
     let new_container = match client.get_container(new_container_id) {
         Ok(container) => container,
         Err(_) => {
@@ -173,7 +187,10 @@ pub fn execute_post_update_command<C: LifecycleClient>(
         .execute_command(new_container_id, &command, timeout)
         .is_err()
     {
-        error!(container = new_container.name(), "post-update command failed");
+        error!(
+            container = new_container.name(),
+            "post-update command failed"
+        );
     }
 }
 
@@ -329,8 +346,8 @@ mod tests {
             false,
         );
         let skipped = lifecycle_container("container-beta", "beta", &[], true, false);
-        let client = MockClient::new(Ok(vec![matched.clone(), skipped]))
-            .with_exec_results([Ok(false)]);
+        let client =
+            MockClient::new(Ok(vec![matched.clone(), skipped])).with_exec_results([Ok(false)]);
         let params = UpdateParams::new().with_filter(|container| container.name() == "alpha");
 
         execute_pre_checks(&client, &params).expect("pre-checks should never fail");

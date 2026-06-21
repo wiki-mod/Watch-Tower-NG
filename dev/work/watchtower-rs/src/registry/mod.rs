@@ -2,13 +2,13 @@
 
 //! Registry helper surface translated from `old-source/pkg/registry/registry.go`.
 
+pub mod auth;
+pub mod credentials;
+pub mod digest;
 pub mod helpers;
 pub mod manifest;
-pub mod auth;
-pub mod digest;
-pub mod credentials;
-pub mod trust;
 pub mod pull;
+pub mod trust;
 
 use tracing::debug;
 

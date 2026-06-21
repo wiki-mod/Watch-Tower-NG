@@ -1,10 +1,11 @@
 #![forbid(unsafe_code)]
 #![allow(dead_code)]
-
 //! Docker container parity helpers translated from the legacy Go container package.
 //!
 //! The module keeps the data model small and explicit so the container-specific
 //! logic can be exercised without wiring in Docker HTTP clients yet.
+
+pub mod errors;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::time::Duration;
@@ -26,8 +27,10 @@ const PRE_CHECK_LABEL: &str = "com.centurylinklabs.watchtower.lifecycle.pre-chec
 const POST_CHECK_LABEL: &str = "com.centurylinklabs.watchtower.lifecycle.post-check";
 const PRE_UPDATE_LABEL: &str = "com.centurylinklabs.watchtower.lifecycle.pre-update";
 const POST_UPDATE_LABEL: &str = "com.centurylinklabs.watchtower.lifecycle.post-update";
-const PRE_UPDATE_TIMEOUT_LABEL: &str = "com.centurylinklabs.watchtower.lifecycle.pre-update-timeout";
-const POST_UPDATE_TIMEOUT_LABEL: &str = "com.centurylinklabs.watchtower.lifecycle.post-update-timeout";
+const PRE_UPDATE_TIMEOUT_LABEL: &str =
+    "com.centurylinklabs.watchtower.lifecycle.pre-update-timeout";
+const POST_UPDATE_TIMEOUT_LABEL: &str =
+    "com.centurylinklabs.watchtower.lifecycle.post-update-timeout";
 
 fn error_no_image_info() -> Error {
     Error::InvalidConfig("no available image info".to_string())
@@ -54,7 +57,9 @@ fn parse_bool_like_go(value: &str) -> Option<bool> {
 }
 
 pub fn contains_watchtower_label(labels: &BTreeMap<String, String>) -> bool {
-    labels.get(WATCHTOWER_LABEL).is_some_and(|value| value == "true")
+    labels
+        .get(WATCHTOWER_LABEL)
+        .is_some_and(|value| value == "true")
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -315,10 +320,14 @@ impl Container {
 
         let container_id_short = self.id().short_id();
         for endpoint in endpoints.values_mut() {
-            endpoint.aliases.retain(|alias| alias != &container_id_short);
+            endpoint
+                .aliases
+                .retain(|alias| alias != &container_id_short);
         }
 
-        NetworkingConfig { endpoints: endpoints.into_iter().collect() }
+        NetworkingConfig {
+            endpoints: endpoints.into_iter().collect(),
+        }
     }
 
     fn get_label_value_or_empty(&self, label: &str) -> &str {
@@ -342,11 +351,19 @@ impl Container {
 
     fn subtract_runtime_overrides(config: &mut ContainerConfig, image_config: &ContainerConfig) {
         config.env.retain(|value| !image_config.env.contains(value));
-        config.labels.retain(|key, value| image_config.labels.get(key) != Some(value));
-        config.volumes.retain(|value| !image_config.volumes.contains(value));
+        config
+            .labels
+            .retain(|key, value| image_config.labels.get(key) != Some(value));
+        config
+            .volumes
+            .retain(|value| !image_config.volumes.contains(value));
     }
 
-    fn clear_simple_fields(config: &mut ContainerConfig, image_config: &ContainerConfig, host_config: &HostConfig) {
+    fn clear_simple_fields(
+        config: &mut ContainerConfig,
+        image_config: &ContainerConfig,
+        host_config: &HostConfig,
+    ) {
         if config.working_dir == image_config.working_dir {
             config.working_dir.clear();
         }
@@ -358,7 +375,10 @@ impl Container {
         }
     }
 
-    fn clear_entrypoint_cmd_if_default(config: &mut ContainerConfig, image_config: &ContainerConfig) {
+    fn clear_entrypoint_cmd_if_default(
+        config: &mut ContainerConfig,
+        image_config: &ContainerConfig,
+    ) {
         if config.entrypoint == image_config.entrypoint {
             config.entrypoint.clear();
             if config.cmd == image_config.cmd {
@@ -384,7 +404,11 @@ impl Container {
         clear_if_equal(&mut current.start_period, &default.start_period);
     }
 
-    fn adjust_ports(config: &mut ContainerConfig, image_config: &ContainerConfig, host_config: &HostConfig) {
+    fn adjust_ports(
+        config: &mut ContainerConfig,
+        image_config: &ContainerConfig,
+        host_config: &HostConfig,
+    ) {
         if let Some(exposed_ports) = config.exposed_ports.as_mut() {
             if let Some(image_ports) = image_config.exposed_ports.as_ref() {
                 exposed_ports.retain(|port| !image_ports.contains(port));
@@ -460,7 +484,9 @@ impl Container {
 
     /// Return whether the container is running.
     pub fn is_running(&self) -> bool {
-        self.container_info.as_ref().is_some_and(|info| info.state.running)
+        self.container_info
+            .as_ref()
+            .is_some_and(|info| info.state.running)
     }
 
     /// Return whether the container is restarting.
@@ -528,7 +554,11 @@ impl Container {
 
     /// Return whether a container update should only be monitored.
     pub fn is_monitor_only(&self, params: &UpdateParams) -> bool {
-        self.get_container_or_global_bool(params.monitor_only, MONITOR_ONLY_LABEL, params.label_precedence)
+        self.get_container_or_global_bool(
+            params.monitor_only,
+            MONITOR_ONLY_LABEL,
+            params.label_precedence,
+        )
     }
 
     /// Return whether the container image should not be pulled.
@@ -536,7 +566,12 @@ impl Container {
         self.get_container_or_global_bool(params.no_pull, NO_PULL_LABEL, params.label_precedence)
     }
 
-    fn get_container_or_global_bool(&self, global_value: bool, label: &str, label_precedence: bool) -> bool {
+    fn get_container_or_global_bool(
+        &self,
+        global_value: bool,
+        label: &str,
+        label_precedence: bool,
+    ) -> bool {
         match self.get_bool_label_value(label) {
             Ok(container_value) => {
                 if label_precedence {
@@ -872,7 +907,10 @@ mod tests {
                 cmd: vec!["echo".to_string(), "hello".to_string()],
                 env: vec!["REMOVE=no".to_string()],
                 volumes: BTreeSet::from(["/cache".to_string()]),
-                exposed_ports: Some(BTreeSet::from(["80/tcp".to_string(), "443/tcp".to_string()])),
+                exposed_ports: Some(BTreeSet::from([
+                    "80/tcp".to_string(),
+                    "443/tcp".to_string(),
+                ])),
                 healthcheck: Some(HealthConfig {
                     test: vec!["CMD-SHELL".to_string(), "curl -f localhost".to_string()],
                     interval: Duration::from_secs(10),
@@ -935,7 +973,10 @@ mod tests {
         let c = base_container();
         let network_config = c.get_network_config();
 
-        let endpoint = network_config.endpoints.get("bridge").expect("bridge endpoint");
+        let endpoint = network_config
+            .endpoints
+            .get("bridge")
+            .expect("bridge endpoint");
         assert_eq!(
             endpoint.aliases,
             vec!["db".to_string(), "redis".to_string()]
@@ -967,7 +1008,10 @@ mod tests {
         );
         assert_eq!(
             config.exposed_ports,
-            Some(BTreeSet::from(["80/tcp".to_string(), "443/tcp".to_string()]))
+            Some(BTreeSet::from([
+                "80/tcp".to_string(),
+                "443/tcp".to_string()
+            ]))
         );
     }
 
@@ -976,7 +1020,10 @@ mod tests {
         let mut c = base_container();
         let host_config = c.get_create_host_config().expect("host config");
 
-        assert_eq!(host_config.links, vec!["/redis:/test-containrrr".to_string()]);
+        assert_eq!(
+            host_config.links,
+            vec!["/redis:/test-containrrr".to_string()]
+        );
     }
 
     #[test]

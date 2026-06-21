@@ -110,8 +110,9 @@ fn resolve_docker_config_file(base: PathBuf) -> PathBuf {
 
 fn encode_auth_json(username: &str, password: &str) -> Result<String> {
     let payload = AuthPayload { username, password };
-    let serialized = serde_json::to_vec(&payload)
-        .map_err(|err| CredentialsError::ConfigParse { message: err.to_string() })?;
+    let serialized = serde_json::to_vec(&payload).map_err(|err| CredentialsError::ConfigParse {
+        message: err.to_string(),
+    })?;
 
     Ok(encode_base64_urlsafe(&serialized))
 }
@@ -334,8 +335,9 @@ mod tests {
     fn encoded_config_auth_returns_empty_string_when_credentials_are_missing() {
         let config_path = write_temp_config("{}");
 
-        let auth = encoded_config_auth_from_path("registry.example.com/team/image:latest", &config_path)
-            .expect("config should be readable");
+        let auth =
+            encoded_config_auth_from_path("registry.example.com/team/image:latest", &config_path)
+                .expect("config should be readable");
 
         assert_eq!(auth, "");
     }
@@ -347,7 +349,9 @@ mod tests {
         let err = encoded_config_auth_from_path("registry.example.com/team/image:latest", &path)
             .expect_err("missing config file should fail");
 
-        assert!(matches!(err, CredentialsError::ConfigRead { path: missing_path, .. } if missing_path == path));
+        assert!(
+            matches!(err, CredentialsError::ConfigRead { path: missing_path, .. } if missing_path == path)
+        );
     }
 
     #[test]
@@ -384,8 +388,9 @@ mod tests {
             }"#,
         );
 
-        let auth = encoded_config_auth_from_path("registry.example.com/team/image:latest", &config_path)
-            .expect("config should decode");
+        let auth =
+            encoded_config_auth_from_path("registry.example.com/team/image:latest", &config_path)
+                .expect("config should decode");
 
         assert_eq!(
             auth,

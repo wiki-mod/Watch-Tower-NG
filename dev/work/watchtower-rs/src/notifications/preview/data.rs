@@ -15,8 +15,7 @@ use crate::types::{ContainerID, ContainerReport, ImageID};
 
 use super::logs::{LogEntry, LogLevel};
 use super::preview_strings::{
-    CONTAINER_NAMES, ERROR_MESSAGES, LOG_ERRORS, LOG_MESSAGES, ORGANIZATION_NAMES,
-    SKIPPED_MESSAGES,
+    CONTAINER_NAMES, ERROR_MESSAGES, LOG_ERRORS, LOG_MESSAGES, ORGANIZATION_NAMES, SKIPPED_MESSAGES,
 };
 use super::report::Report;
 use super::report::State;
@@ -81,7 +80,9 @@ impl PreviewData {
             _ => None,
         };
 
-        self.add_container(containerStatus::new(cid, old, new, name, image, error, state));
+        self.add_container(containerStatus::new(
+            cid, old, new, name, image, error, state,
+        ));
     }
 
     fn add_container(&mut self, container: containerStatus) {

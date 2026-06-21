@@ -2,11 +2,11 @@
 
 use crate::container::Container;
 use crate::lifecycle::{self, HookOutcome, LifecycleClient};
+use crate::rand_name::rand_name;
 use crate::session::Progress;
 use crate::sorter::sort_by_dependencies;
-use crate::types::{ContainerID, ImageID, Report, RuntimeContainer, UpdateParams};
-use crate::rand_name::rand_name;
-use std::collections::HashSet;
+use crate::types::{ContainerID, ImageID, Report, UpdateParams};
+use std::collections::HashMap;
 use std::time::Duration;
 use tracing::{debug, error, info, trace};
 
@@ -24,7 +24,10 @@ pub trait UpdateClient: LifecycleClient {
         timeout: Duration,
     ) -> std::result::Result<(), Self::Error>;
 
-    fn start_container(&self, container: &Container) -> std::result::Result<ContainerID, Self::Error>;
+    fn start_container(
+        &self,
+        container: &Container,
+    ) -> std::result::Result<ContainerID, Self::Error>;
 
     fn rename_container(
         &self,
@@ -36,86 +39,88 @@ pub trait UpdateClient: LifecycleClient {
 }
 
 /// Update orchestration translated from the legacy Go action flow.
-pub fn update<C>(client: &C, params: &UpdateParams) -> std::result::Result<Report, String>
+pub fn update<C>(client: &C, params: &UpdateParams) -> std::result::Result<Report, C::Error>
 where
     C: UpdateClient,
+    C::Error: std::fmt::Display + From<String>,
 {
     debug!("Checking containers for updated images");
 
     let mut progress = Progress::default();
 
     if params.lifecycle_hooks {
-        lifecycle::execute_pre_checks(client, params)
-            .map_err(|_| "pre-check execution failed".to_string())?;
+        lifecycle::execute_pre_checks(client, params)?;
     }
 
-    let mut containers = client
-        .list_containers()
-        .map_err(|_| "container listing failed".to_string())?;
+    let mut containers = client.list_containers()?;
     containers.retain(|container| params.matches(container));
 
     let containers = scan_and_mark_stale(containers, client, params, &mut progress)?;
-    let mut containers = sort_by_dependencies(&containers).map_err(|error| error.to_string())?;
+    let mut containers = sort_by_dependencies(&containers)?;
     update_implicit_restart(&mut containers);
 
-    let to_update = select_containers_to_update(&containers, params, &mut progress);
-    execute_update(&to_update, client, params, &mut progress);
+    let mut to_update = select_containers_to_update(&containers, params, &mut progress);
+    execute_update(&mut to_update, client, params, &mut progress);
 
     if params.lifecycle_hooks {
-        lifecycle::execute_post_checks(client, params)
-            .map_err(|_| "post-check execution failed".to_string())?;
+        lifecycle::execute_post_checks(client, params)?;
     }
 
     Ok(progress.report())
 }
 
-fn scan_and_mark_stale(
+fn scan_and_mark_stale<C>(
     mut containers: Vec<Container>,
-    client: &impl UpdateClient,
+    client: &C,
     params: &UpdateParams,
     progress: &mut Progress,
-) -> std::result::Result<Vec<Container>, String> {
-    for container in &mut containers {
-        let stale_result = client
-            .is_container_stale(container, params)
-            .map_err(|_| "stale check failed".to_string());
+) -> std::result::Result<Vec<Container>, C::Error>
+where
+    C: UpdateClient,
+    C::Error: std::fmt::Display,
+{
+    for i in 0..containers.len() {
+        let stale_result = client.is_container_stale(&containers[i], params);
 
-        let (stale, newest_image, error) = match stale_result {
-            Ok((stale, newest_image)) => (stale, newest_image, None),
-            Err(error) => (false, container.image_id().clone(), Some(error)),
+        let (stale, newest_image) = match stale_result {
+            Ok((stale, newest_image)) => (stale, newest_image),
+            Err(err) => {
+                info!(
+                    "Unable to update container {:?}: {}. Proceeding to next.",
+                    containers[i].name(),
+                    err
+                );
+                progress.add_skipped(&containers[i], err.to_string());
+                containers[i].set_stale(false);
+                continue;
+            }
         };
 
-        let should_update = stale && !params.no_restart && !container.is_monitor_only(params);
-        if error.is_none() && should_update {
-            if let Err(config_error) = container.verify_configuration() {
+        let should_update = stale && !params.no_restart && !containers[i].is_monitor_only(params);
+
+        if should_update {
+            if let Err(config_err) = containers[i].verify_configuration() {
                 if tracing::enabled!(tracing::Level::TRACE) {
-                    trace!("Image info: {:?}", container.image_info());
-                    trace!("Container info: {:?}", container.container_info());
-                    if let Some(image_info) = container.image_info() {
+                    if let Some(image_info) = containers[i].image_info() {
+                        trace!("Image info: {:?}", image_info);
                         trace!("Image config: {:?}", image_info.config);
                     }
+                    trace!("Container info: {:?}", containers[i].container_info());
                 }
 
-                let error = config_error.to_string();
-                info!("Unable to update container {:?}: {}. Proceeding to next.", container.name(), error);
-                progress.add_skipped(container, error);
-                container.set_stale(false);
+                info!(
+                    "Unable to update container {:?}: {}. Proceeding to next.",
+                    containers[i].name(),
+                    config_err
+                );
+                progress.add_skipped(&containers[i], config_err.to_string());
+                containers[i].set_stale(false);
                 continue;
             }
         }
 
-        if let Some(error) = error {
-            info!(
-                "Unable to update container {:?}: {}. Proceeding to next.",
-                container.name(),
-                error
-            );
-            container.set_stale(false);
-            progress.add_skipped(container, error);
-        } else {
-            progress.add_scanned(container, newest_image);
-            container.set_stale(stale);
-        }
+        progress.add_scanned(&containers[i], newest_image);
+        containers[i].set_stale(stale);
     }
 
     Ok(containers)
@@ -128,56 +133,69 @@ fn select_containers_to_update(
 ) -> Vec<Container> {
     let mut res = Vec::new();
 
-    for container in containers {
-        if !container.is_monitor_only(params) {
-            res.push(container.clone());
-            progress.mark_for_update(container.id());
+    for c in containers {
+        if !c.is_monitor_only(params) {
+            res.push(c.clone());
+            progress.mark_for_update(c.id());
         }
     }
 
     res
 }
 
-fn execute_update(
-    containers_to_update: &[Container],
-    client: &impl UpdateClient,
+fn execute_update<C>(
+    containers_to_update: &mut [Container],
+    client: &C,
     params: &UpdateParams,
     progress: &mut Progress,
-) {
+) where
+    C: UpdateClient,
+    C::Error: std::fmt::Display,
+{
     if params.rolling_restart {
-        progress.update_failed(perform_rolling_restart(containers_to_update, client, params));
+        let failed = perform_rolling_restart(containers_to_update, client, params);
+        for (id, err) in failed {
+            progress.update_failed(vec![(id, err)]);
+        }
         return;
     }
 
-    let (failed_stop, stopped_images) = stop_containers_in_reversed_order(containers_to_update, client, params);
+    let (failed_stop, stopped_images) =
+        stop_containers_in_reversed_order(containers_to_update, client, params);
     progress.update_failed(failed_stop);
-    let failed_start = restart_containers_in_sorted_order(containers_to_update, client, params, stopped_images);
+
+    let failed_start =
+        restart_containers_in_sorted_order(containers_to_update, client, params, &stopped_images);
     progress.update_failed(failed_start);
 }
 
-fn perform_rolling_restart(
-    containers: &[Container],
-    client: &impl UpdateClient,
+fn perform_rolling_restart<C>(
+    containers: &mut [Container],
+    client: &C,
     params: &UpdateParams,
-) -> Vec<(ContainerID, String)> {
-    let mut cleanup_image_ids = HashSet::<ImageID>::new();
-    let mut failed = Vec::with_capacity(containers.len());
+) -> Vec<(ContainerID, String)>
+where
+    C: UpdateClient,
+    C::Error: std::fmt::Display,
+{
+    let mut cleanup_image_ids: HashMap<ImageID, bool> = HashMap::new();
+    let mut failed: Vec<(ContainerID, String)> = Vec::new();
 
-    for container in containers.iter().rev() {
-        if !container.to_restart() {
+    for i in (0..containers.len()).rev() {
+        if !containers[i].to_restart() {
             continue;
         }
 
-        match stop_stale_container(container, client, params) {
-            Ok(()) => match restart_stale_container(container, client, params) {
+        match stop_stale_container(&mut containers[i], client, params) {
+            Ok(()) => match restart_stale_container(&containers[i], client, params) {
                 Ok(()) => {
-                    if container.is_stale() {
-                        cleanup_image_ids.insert(container.image_id().clone());
+                    if containers[i].is_stale() {
+                        cleanup_image_ids.insert(containers[i].image_id().clone(), true);
                     }
                 }
-                Err(error) => failed.push((container.id().clone(), error)),
+                Err(err) => failed.push((containers[i].id().clone(), err)),
             },
-            Err(error) => failed.push((container.id().clone(), error)),
+            Err(err) => failed.push((containers[i].id().clone(), err)),
         }
     }
 
@@ -188,29 +206,41 @@ fn perform_rolling_restart(
     failed
 }
 
-fn stop_containers_in_reversed_order(
-    containers: &[Container],
-    client: &impl UpdateClient,
+fn stop_containers_in_reversed_order<C>(
+    containers: &mut [Container],
+    client: &C,
     params: &UpdateParams,
-) -> (Vec<(ContainerID, String)>, Vec<ImageID>) {
-    let mut failed = Vec::with_capacity(containers.len());
-    let mut stopped = Vec::with_capacity(containers.len());
+) -> (Vec<(ContainerID, String)>, HashMap<ImageID, bool>)
+where
+    C: UpdateClient,
+    C::Error: std::fmt::Display,
+{
+    let mut failed: Vec<(ContainerID, String)> = Vec::new();
+    let mut stopped: HashMap<ImageID, bool> = HashMap::new();
 
-    for container in containers.iter().rev() {
-        match stop_stale_container(container, client, params) {
-            Ok(()) => stopped.push(safe_image_id_or_empty(container)),
-            Err(error) => failed.push((container.id().clone(), error)),
+    for i in (0..containers.len()).rev() {
+        match stop_stale_container(&mut containers[i], client, params) {
+            Ok(()) => {
+                stopped.insert(safe_image_id_or_empty(&containers[i]), true);
+            }
+            Err(err) => {
+                failed.push((containers[i].id().clone(), err));
+            }
         }
     }
 
     (failed, stopped)
 }
 
-fn stop_stale_container(
-    container: &Container,
-    client: &impl UpdateClient,
+fn stop_stale_container<C>(
+    container: &mut Container,
+    client: &C,
     params: &UpdateParams,
-) -> std::result::Result<(), String> {
+) -> std::result::Result<(), String>
+where
+    C: UpdateClient,
+    C::Error: std::fmt::Display,
+{
     if container.is_watchtower() {
         debug!("This is the watchtower container {}", container.name());
         return Ok(());
@@ -221,18 +251,24 @@ fn stop_stale_container(
     }
 
     if container.is_linked_to_restarting() {
-        let mut verify_container = container.clone();
-        verify_container.verify_configuration().map_err(|error| error.to_string())?;
+        if let Err(err) = container.verify_configuration() {
+            return Err(err.to_string());
+        }
     }
 
     if params.lifecycle_hooks {
         match lifecycle::execute_pre_update_command(client, container) {
             Ok(HookOutcome::Executed { skip_update: true }) => {
-                debug!("Skipping container as the pre-update command returned exit code 75 (EX_TEMPFAIL)");
-                return Err("skipping container as the pre-update command returned exit code 75 (EX_TEMPFAIL)".to_string());
+                debug!(
+                    "Skipping container as the pre-update command returned exit code 75 (EX_TEMPFAIL)"
+                );
+                return Err(
+                    "skipping container as the pre-update command returned exit code 75 (EX_TEMPFAIL)"
+                        .to_string(),
+                );
             }
             Ok(HookOutcome::Executed { skip_update: false }) | Ok(HookOutcome::Skipped(_)) => {}
-            Err(_error) => {
+            Err(_) => {
                 error!("pre-update execution failed");
                 info!("Skipping container as the pre-update command failed");
                 return Err("pre-update execution failed".to_string());
@@ -242,35 +278,41 @@ fn stop_stale_container(
 
     client
         .stop_container(container, params.timeout)
-        .map_err(|_| {
-            error!("stop container failed");
-            "stop container failed".to_string()
+        .map_err(|e| {
+            error!("{}", e);
+            e.to_string()
         })
 }
 
-fn restart_containers_in_sorted_order(
+fn restart_containers_in_sorted_order<C>(
     containers: &[Container],
-    client: &impl UpdateClient,
+    client: &C,
     params: &UpdateParams,
-    stopped_images: Vec<ImageID>,
-) -> Vec<(ContainerID, String)> {
-    let mut cleanup_image_ids = HashSet::<ImageID>::new();
-    let mut failed = Vec::with_capacity(containers.len());
-    let stopped: HashSet<ImageID> = stopped_images.into_iter().collect();
+    stopped_images: &HashMap<ImageID, bool>,
+) -> Vec<(ContainerID, String)>
+where
+    C: UpdateClient,
+    C::Error: std::fmt::Display,
+{
+    let mut cleanup_image_ids: HashMap<ImageID, bool> = HashMap::new();
+    let mut failed: Vec<(ContainerID, String)> = Vec::new();
 
-    for container in containers {
-        let safe_image_id = safe_image_id_or_empty(container);
-        if !container.to_restart() || !stopped.contains(&safe_image_id) {
+    for c in containers {
+        if !c.to_restart() {
             continue;
         }
 
-        match restart_stale_container(container, client, params) {
+        if !stopped_images.contains_key(&safe_image_id_or_empty(c)) {
+            continue;
+        }
+
+        match restart_stale_container(c, client, params) {
             Ok(()) => {
-                if container.is_stale() {
-                    cleanup_image_ids.insert(container.image_id().clone());
+                if c.is_stale() {
+                    cleanup_image_ids.insert(c.image_id().clone(), true);
                 }
             }
-            Err(error) => failed.push((container.id().clone(), error)),
+            Err(err) => failed.push((c.id().clone(), err)),
         }
     }
 
@@ -281,35 +323,43 @@ fn restart_containers_in_sorted_order(
     failed
 }
 
-fn cleanup_images(client: &impl UpdateClient, image_ids: HashSet<ImageID>) {
-    for image_id in image_ids {
+fn cleanup_images<C>(client: &C, image_ids: HashMap<ImageID, bool>)
+where
+    C: UpdateClient,
+    C::Error: std::fmt::Display,
+{
+    for image_id in image_ids.keys() {
         if image_id.as_str().is_empty() {
             continue;
         }
 
-        if client.remove_image_by_id(&image_id).is_err() {
-            error!("remove image failed");
+        if let Err(e) = client.remove_image_by_id(image_id) {
+            error!("{}", e);
         }
     }
 }
 
-fn restart_stale_container(
+fn restart_stale_container<C>(
     container: &Container,
-    client: &impl UpdateClient,
+    client: &C,
     params: &UpdateParams,
-) -> std::result::Result<(), String> {
-    if container.is_watchtower() && client.rename_container(container, &rand_name()).is_err() {
-        error!("rename container failed");
-        return Ok(());
+) -> std::result::Result<(), String>
+where
+    C: UpdateClient,
+    C::Error: std::fmt::Display,
+{
+    if container.is_watchtower() {
+        if client.rename_container(container, &rand_name()).is_err() {
+            error!("rename container failed");
+            return Ok(());
+        }
     }
 
     if !params.no_restart {
-        let new_container_id = client
-            .start_container(container)
-            .map_err(|_| {
-                error!("start container failed");
-                "start container failed".to_string()
-            })?;
+        let new_container_id = client.start_container(container).map_err(|e| {
+            error!("{}", e);
+            e.to_string()
+        })?;
 
         if container.to_restart() && params.lifecycle_hooks {
             lifecycle::execute_post_update_command(client, &new_container_id);
@@ -319,20 +369,32 @@ fn restart_stale_container(
     Ok(())
 }
 
-fn update_implicit_restart<C: RuntimeContainer>(containers: &mut [C]) {
+/// UpdateImplicitRestart iterates through the passed containers, setting the
+/// `LinkedToRestarting` flag if any of its linked containers are marked for restart
+fn update_implicit_restart(containers: &mut [Container]) {
     for ci in 0..containers.len() {
         if containers[ci].to_restart() {
             continue;
         }
 
-        if let Some(link) = linked_container_marked_for_restart(containers[ci].links(), containers) {
-            debug!(restarting = link, linked = containers[ci].name(), "container is linked to restarting");
+        if let Some(link) = linked_container_marked_for_restart(containers[ci].links(), containers)
+        {
+            debug!(
+                restarting = link,
+                linked = containers[ci].name(),
+                "container is linked to restarting"
+            );
             containers[ci].set_linked_to_restarting(true);
         }
     }
 }
 
-fn linked_container_marked_for_restart(links: &[String], containers: &[impl RuntimeContainer]) -> Option<String> {
+/// linkedContainerMarkedForRestart returns the name of the first link that matches a
+/// container marked for restart
+fn linked_container_marked_for_restart(
+    links: &[String],
+    containers: &[Container],
+) -> Option<String> {
     for link_name in links {
         for candidate in containers {
             if candidate.name() == link_name && candidate.to_restart() {

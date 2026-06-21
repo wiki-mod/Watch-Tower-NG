@@ -129,7 +129,10 @@ impl DockerCliAdapter {
         warn_on_head_pull_failed(self.options.warn_on_head_failed, container.image_name())
     }
 
-    fn inspect_container_model(&self, container_id: &ContainerID) -> Result<Container, DockerCliError> {
+    fn inspect_container_model(
+        &self,
+        container_id: &ContainerID,
+    ) -> Result<Container, DockerCliError> {
         let mut inspect = self.inspect_container(container_id.as_str())?;
         if let Some(parent_id) = inspect.network_container_id().map(str::to_string) {
             if let Ok(parent) = self.inspect_container(parent_id.as_str()) {
@@ -193,7 +196,10 @@ impl DockerCliAdapter {
         }
     }
 
-    fn inspect_containers(&self, ids: &[String]) -> Result<Vec<CliContainerInspect>, DockerCliError> {
+    fn inspect_containers(
+        &self,
+        ids: &[String],
+    ) -> Result<Vec<CliContainerInspect>, DockerCliError> {
         if ids.is_empty() {
             return Ok(Vec::new());
         }
@@ -226,11 +232,8 @@ impl DockerCliAdapter {
             });
         }
 
-        let mut items: Vec<CliContainerInspect> =
-            serde_json::from_str(output.stdout.trim()).map_err(|source| DockerCliError::Json {
-                context,
-                source,
-            })?;
+        let mut items: Vec<CliContainerInspect> = serde_json::from_str(output.stdout.trim())
+            .map_err(|source| DockerCliError::Json { context, source })?;
         items.pop().ok_or_else(|| DockerCliError::MissingInspect {
             kind: "container",
             target: id.to_string(),
@@ -245,13 +248,13 @@ impl DockerCliAdapter {
             return Ok(HashMap::new());
         }
 
-        let args = image_ids
-            .iter()
-            .cloned()
-            .fold(vec!["image".to_string(), "inspect".to_string()], |mut args, id| {
+        let args = image_ids.iter().cloned().fold(
+            vec!["image".to_string(), "inspect".to_string()],
+            |mut args, id| {
                 args.push(id);
                 args
-            });
+            },
+        );
         let images: Vec<CliImageInspect> = self.json(args, "inspecting images")?;
         Ok(images
             .into_iter()
@@ -260,8 +263,10 @@ impl DockerCliAdapter {
     }
 
     fn inspect_image_model(&self, image_ref: &str) -> Result<CliImageInspect, DockerCliError> {
-        let items: Vec<CliImageInspect> =
-            self.json(["image", "inspect", image_ref], format!("inspecting image `{image_ref}`"))?;
+        let items: Vec<CliImageInspect> = self.json(
+            ["image", "inspect", image_ref],
+            format!("inspecting image `{image_ref}`"),
+        )?;
         items
             .into_iter()
             .next()
@@ -300,7 +305,10 @@ impl DockerCliAdapter {
             return Ok(());
         }
 
-        self.success(["pull", image_name], format!("pulling image `{image_name}`"))
+        self.success(
+            ["pull", image_name],
+            format!("pulling image `{image_name}`"),
+        )
     }
 
     fn recreate_container(&self, container: &Container) -> Result<ContainerID, DockerCliError> {
@@ -413,7 +421,10 @@ impl DockerCliAdapter {
         loop {
             if Instant::now() >= deadline {
                 return Err(DockerCliError::Timeout {
-                    context: format!("waiting for container removal: {}", ContainerID::new(id).short_id()),
+                    context: format!(
+                        "waiting for container removal: {}",
+                        ContainerID::new(id).short_id()
+                    ),
                     timeout: wait_time,
                 });
             }
@@ -426,7 +437,11 @@ impl DockerCliAdapter {
         }
     }
 
-    fn stdout_trimmed<I, S>(&self, args: I, context: impl Into<String>) -> Result<String, DockerCliError>
+    fn stdout_trimmed<I, S>(
+        &self,
+        args: I,
+        context: impl Into<String>,
+    ) -> Result<String, DockerCliError>
     where
         I: IntoIterator<Item = S>,
         S: AsRef<str>,
@@ -454,10 +469,8 @@ impl DockerCliAdapter {
         let context = context.into();
         let output = self.run(args, None, context.clone())?;
         let output = self.ensure_success(output)?;
-        serde_json::from_str(output.stdout.trim()).map_err(|source| DockerCliError::Json {
-            context,
-            source,
-        })
+        serde_json::from_str(output.stdout.trim())
+            .map_err(|source| DockerCliError::Json { context, source })
     }
 
     fn run<I, S>(
@@ -845,7 +858,10 @@ impl CliConfig {
                 .exposed_ports
                 .as_ref()
                 .map(|ports| ports.keys().cloned().collect::<BTreeSet<_>>()),
-            healthcheck: self.healthcheck.as_ref().map(CliHealthcheck::to_health_config),
+            healthcheck: self
+                .healthcheck
+                .as_ref()
+                .map(CliHealthcheck::to_health_config),
             hostname: self.hostname.clone(),
         }
     }
@@ -1048,7 +1064,10 @@ struct CreatePlan {
 }
 
 impl CreatePlan {
-    fn from_inspect(desired_name: &str, inspect: &CliContainerInspect) -> Result<Self, DockerCliError> {
+    fn from_inspect(
+        desired_name: &str,
+        inspect: &CliContainerInspect,
+    ) -> Result<Self, DockerCliError> {
         let container_name = trim_container_name(desired_name);
         let config = inspect
             .config
@@ -1057,13 +1076,14 @@ impl CreatePlan {
                 container: container_name.to_string(),
                 detail: "container inspect did not include `Config`".to_string(),
             })?;
-        let host_config = inspect
-            .host_config
-            .as_ref()
-            .ok_or_else(|| DockerCliError::UnsupportedConfig {
-                container: container_name.to_string(),
-                detail: "container inspect did not include `HostConfig`".to_string(),
-            })?;
+        let host_config =
+            inspect
+                .host_config
+                .as_ref()
+                .ok_or_else(|| DockerCliError::UnsupportedConfig {
+                    container: container_name.to_string(),
+                    detail: "container inspect did not include `HostConfig`".to_string(),
+                })?;
 
         validate_supported_recreate(container_name, host_config)?;
 
@@ -1106,7 +1126,10 @@ impl CreatePlan {
             })
             .unwrap_or_default();
 
-        Ok(Self { args, extra_networks })
+        Ok(Self {
+            args,
+            extra_networks,
+        })
     }
 
     fn create_args(&self) -> Vec<&str> {
@@ -1168,7 +1191,11 @@ fn create_command_args(
     args
 }
 
-fn append_create_config_args(args: &mut Vec<String>, container: &Container, config: &ContainerConfig) {
+fn append_create_config_args(
+    args: &mut Vec<String>,
+    container: &Container,
+    config: &ContainerConfig,
+) {
     if !config.hostname.is_empty() {
         args.push("--hostname".to_string());
         args.push(config.hostname.clone());
@@ -1318,7 +1345,11 @@ fn validate_supported_recreate(
     if !host_config.cpuset_cpus.is_empty() || !host_config.cpuset_mems.is_empty() {
         return unsupported(container_name, "CPU set constraints are not translated yet");
     }
-    if host_config.devices.as_ref().is_some_and(|devices| !devices.is_empty()) {
+    if host_config
+        .devices
+        .as_ref()
+        .is_some_and(|devices| !devices.is_empty())
+    {
         return unsupported(container_name, "device mappings are not translated yet");
     }
     if host_config
@@ -1346,7 +1377,11 @@ fn unsupported<T>(container_name: &str, detail: &str) -> Result<T, DockerCliErro
     })
 }
 
-fn append_basic_create_args(args: &mut Vec<String>, config: &CliConfig, host_config: &CliHostConfig) {
+fn append_basic_create_args(
+    args: &mut Vec<String>,
+    config: &CliConfig,
+    host_config: &CliHostConfig,
+) {
     if !config.hostname.is_empty() {
         args.push("--hostname".to_string());
         args.push(config.hostname.clone());
@@ -1369,7 +1404,11 @@ fn append_basic_create_args(args: &mut Vec<String>, config: &CliConfig, host_con
     if config.open_stdin {
         args.push("--interactive".to_string());
     }
-    if let Some(stop_signal) = config.stop_signal.as_deref().filter(|value| !value.is_empty()) {
+    if let Some(stop_signal) = config
+        .stop_signal
+        .as_deref()
+        .filter(|value| !value.is_empty())
+    {
         args.push("--stop-signal".to_string());
         args.push(stop_signal.to_string());
     }
@@ -1548,7 +1587,7 @@ fn append_mount_args(
                 return unsupported(
                     container_name,
                     &format!("mount type `{other}` is not translated yet"),
-                )
+                );
             }
         };
 
@@ -1577,7 +1616,9 @@ fn append_healthcheck_args(args: &mut Vec<String>, healthcheck: &CliHealthcheck)
             }
             if healthcheck.start_period != 0 {
                 args.push("--health-start-period".to_string());
-                args.push(format_duration(duration_from_nanos(healthcheck.start_period)));
+                args.push(format_duration(duration_from_nanos(
+                    healthcheck.start_period,
+                )));
             }
             if healthcheck.retries != 0 {
                 args.push("--health-retries".to_string());
@@ -1705,7 +1746,9 @@ fn parse_network_mode(mode: &str) -> NetworkMode {
 }
 
 fn empty_to_none(value: Option<&str>) -> Option<String> {
-    value.filter(|value| !value.is_empty()).map(ToOwned::to_owned)
+    value
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 fn duration_from_nanos(value: i64) -> Duration {
@@ -1799,7 +1842,10 @@ pub fn warn_on_head_pull_failed_for_container(
 /// alias list before reusing the network config. That behavior is preserved
 /// here.
 #[must_use]
-pub fn normalize_network_config(mut config: NetworkingConfig, container_id_short: &str) -> NetworkingConfig {
+pub fn normalize_network_config(
+    mut config: NetworkingConfig,
+    container_id_short: &str,
+) -> NetworkingConfig {
     for endpoint in config.endpoints.values_mut() {
         endpoint.aliases.retain(|alias| alias != container_id_short);
     }
@@ -2071,10 +2117,19 @@ mod tests {
             image_name: "docker.io/library/nginx:latest".to_string(),
         };
 
-        assert!(warn_on_head_pull_failed(WarningStrategy::Always, "registry.example.com/team/app:latest"));
+        assert!(warn_on_head_pull_failed(
+            WarningStrategy::Always,
+            "registry.example.com/team/app:latest"
+        ));
         assert!(!warn_on_head_pull_failed(WarningStrategy::Never, "ubuntu"));
-        assert!(warn_on_head_pull_failed(WarningStrategy::Auto, "ghcr.io/watchtower/image:main"));
-        assert!(warn_on_head_pull_failed_for_container(WarningStrategy::Auto, &container));
+        assert!(warn_on_head_pull_failed(
+            WarningStrategy::Auto,
+            "ghcr.io/watchtower/image:main"
+        ));
+        assert!(warn_on_head_pull_failed_for_container(
+            WarningStrategy::Auto,
+            &container
+        ));
     }
 
     #[test]
@@ -2107,7 +2162,10 @@ mod tests {
 
         assert_eq!(simple.endpoints.len(), 1);
         let endpoint = simple.endpoints.values().next().unwrap();
-        assert!(endpoint.aliases == vec!["db".to_string()] || endpoint.aliases == vec!["cache".to_string()]);
+        assert!(
+            endpoint.aliases == vec!["db".to_string()]
+                || endpoint.aliases == vec!["cache".to_string()]
+        );
     }
 
     #[test]
@@ -2146,10 +2204,7 @@ mod tests {
         assert!(plan.args.contains(&"--label".to_string()));
         assert!(plan.args.contains(&"com.example.role=api".to_string()));
         assert!(plan.args.contains(&"--publish".to_string()));
-        assert!(
-            plan.args
-                .contains(&"127.0.0.1:8080:80/tcp".to_string())
-        );
+        assert!(plan.args.contains(&"127.0.0.1:8080:80/tcp".to_string()));
         assert!(plan.args.contains(&"--mount".to_string()));
         assert!(
             plan.args.contains(
@@ -2194,12 +2249,14 @@ mod tests {
 
     #[test]
     fn create_plan_rejects_untranslated_resource_limits() {
-        let inspect: CliContainerInspect = serde_json::from_str(
-            &SAMPLE_INSPECT.replace("\"AutoRemove\": false", "\"AutoRemove\": false, \"Memory\": 1024"),
-        )
+        let inspect: CliContainerInspect = serde_json::from_str(&SAMPLE_INSPECT.replace(
+            "\"AutoRemove\": false",
+            "\"AutoRemove\": false, \"Memory\": 1024",
+        ))
         .expect("inspect json should parse");
 
-        let err = CreatePlan::from_inspect("/demo", &inspect).expect_err("memory limit must fail closed");
+        let err =
+            CreatePlan::from_inspect("/demo", &inspect).expect_err("memory limit must fail closed");
 
         assert!(matches!(
             err,
@@ -2214,7 +2271,10 @@ mod tests {
 
         let converted = inspect.into_container_inspect();
 
-        assert_eq!(converted.id, ContainerID::new("1234567890ab1234567890ab1234567890ab1234567890ab1234567890abcd"));
+        assert_eq!(
+            converted.id,
+            ContainerID::new("1234567890ab1234567890ab1234567890ab1234567890ab1234567890abcd")
+        );
         assert_eq!(converted.name, "/demo");
         assert!(converted.state.running);
         assert!(!converted.state.restarting);
@@ -2278,14 +2338,18 @@ mod tests {
         let adapter = DockerCliAdapter::with_binary(script_path.display().to_string());
         let container = runtime_container();
 
-        let created_id = adapter.start_container(&container).expect("start container");
+        let created_id = adapter
+            .start_container(&container)
+            .expect("start container");
 
         assert_eq!(created_id, ContainerID::new("new-container-id"));
 
         let log = fs::read_to_string(&log_path).expect("docker log");
         assert!(log.contains("container create"));
         assert!(log.contains("network disconnect bridge new-container-id --force"));
-        assert!(log.contains("network connect --alias demo --alias demo-api bridge new-container-id"));
+        assert!(
+            log.contains("network connect --alias demo --alias demo-api bridge new-container-id")
+        );
         assert!(log.contains("start new-container-id"));
         assert!(!log.contains("inspect old-container-id"));
         assert!(!log.contains("rm --force old-container-id"));

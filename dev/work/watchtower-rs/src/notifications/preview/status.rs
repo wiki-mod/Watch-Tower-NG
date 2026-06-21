@@ -65,7 +65,17 @@ impl containerStatus {
         self.state.as_str()
     }
 
-    pub(crate) fn into_parts(self) -> (ContainerID, ImageID, ImageID, String, String, Option<String>, State) {
+    pub(crate) fn into_parts(
+        self,
+    ) -> (
+        ContainerID,
+        ImageID,
+        ImageID,
+        String,
+        String,
+        Option<String>,
+        State,
+    ) {
         (
             self.container_id,
             self.old_image,

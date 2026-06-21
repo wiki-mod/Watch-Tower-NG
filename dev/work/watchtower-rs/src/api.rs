@@ -202,8 +202,7 @@ impl Api {
         F: Fn(&HttpRequest) -> HttpResponse + Send + Sync + 'static,
     {
         self.mark_handler_registered();
-        self.routes
-            .insert(path.into(), self.require_token(handler));
+        self.routes.insert(path.into(), self.require_token(handler));
     }
 
     /// Register a trait-based handler under the given path.
@@ -432,10 +431,7 @@ mod tests {
         let handler = api.require_token(test_handler);
         let request = HttpRequest {
             path: "/hello".to_string(),
-            headers: BTreeMap::from([(
-                "Authorization".to_string(),
-                api.expected_authorization(),
-            )]),
+            headers: BTreeMap::from([("Authorization".to_string(), api.expected_authorization())]),
             ..HttpRequest::default()
         };
 
@@ -450,14 +446,14 @@ mod tests {
 
         let request = HttpRequest {
             path: "/hello".to_string(),
-            headers: BTreeMap::from([(
-                "Authorization".to_string(),
-                api.expected_authorization(),
-            )]),
+            headers: BTreeMap::from([("Authorization".to_string(), api.expected_authorization())]),
             ..HttpRequest::default()
         };
 
-        assert_eq!(api.dispatch(&request), HttpResponse::plain(200, "Hello! /hello"));
+        assert_eq!(
+            api.dispatch(&request),
+            HttpResponse::plain(200, "Hello! /hello")
+        );
     }
 
     #[test]
@@ -467,10 +463,7 @@ mod tests {
 
         let request = HttpRequest {
             path: "/hello?image=nginx&image=redis".to_string(),
-            headers: BTreeMap::from([(
-                "Authorization".to_string(),
-                api.expected_authorization(),
-            )]),
+            headers: BTreeMap::from([("Authorization".to_string(), api.expected_authorization())]),
             ..HttpRequest::default()
         };
 
@@ -495,14 +488,14 @@ mod tests {
 
         let request = HttpRequest {
             path: "/object".to_string(),
-            headers: BTreeMap::from([(
-                "Authorization".to_string(),
-                api.expected_authorization(),
-            )]),
+            headers: BTreeMap::from([("Authorization".to_string(), api.expected_authorization())]),
             ..HttpRequest::default()
         };
 
-        assert_eq!(api.dispatch(&request), HttpResponse::plain(200, "Object /object"));
+        assert_eq!(
+            api.dispatch(&request),
+            HttpResponse::plain(200, "Object /object")
+        );
     }
 
     #[test]

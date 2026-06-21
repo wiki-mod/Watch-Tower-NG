@@ -1,101 +1,52 @@
 #![forbid(unsafe_code)]
 
-//! Legacy flag helper logic translated from `old-source/internal/flags/flags.go`.
+//! Flag and configuration helpers ported from `old-source/internal/flags/flags.go`.
 //!
-//! The derive-based CLI in `cli.rs` owns the actual argument registration, but
-//! the legacy program behavior around log formatting, secret expansion, and
-//! duration parsing lives here so the Rust rewrite keeps the same semantics in
-//! one place.
+//! The clap-derive CLI in `cli.rs` replaces the original cobra/viper/pflag surface
+//! entirely. This module provides the remaining legacy semantics:
+//!
+//! - `parse_duration`: Duration parsing with unit suffixes (s, m, h, d).
+//!   Note: Accepts plain numbers as seconds and the "d" unit for days,
+//!   which differs from Go's time.ParseDuration (which rejects both).
+//! - `setup_logging`: Sets up tracing-subscriber with format and level.
+//! - `resolve_secret_references`: Expands file-based secrets in configuration.
+//! - `effective_log_level`: Applies legacy debug/trace level overrides.
+//! - `resolved_log_format`: Picks log format based on terminal detection.
 
 use std::collections::HashMap;
-use std::env;
 use std::fs::File;
-use std::io::{self, BufRead, BufReader, Read};
 use std::io::IsTerminal;
+use std::io::{self, BufRead, BufReader, Read};
 use std::path::Path;
 use std::time::Duration;
 
-use crate::cli::{LoggingConfig, LogFormat, LogLevel, WatchtowerConfig};
+use crate::cli::{LogFormat, LogLevel, LoggingConfig, WatchtowerConfig};
 
 /// Minimum Docker API version accepted by Watchtower.
 pub const DOCKER_API_MIN_VERSION: &str = "1.52";
 
-/// Default polling interval used by the legacy program model.
-#[allow(dead_code)]
+/// Default polling interval in seconds (24 hours).
+/// Used by tests to verify legacy behavior compatibility.
 pub const DEFAULT_INTERVAL_SECONDS: u64 = 24 * 60 * 60;
 
 /// Return the legacy default polling interval.
+/// Used by tests only; new code should rely on cli.rs defaults.
 #[allow(dead_code)]
 pub fn default_interval() -> Duration {
     Duration::from_secs(DEFAULT_INTERVAL_SECONDS)
 }
 
-/// Return the current value of an environment variable or the empty string.
-#[allow(dead_code)]
-pub fn env_string(key: &str) -> String {
-    env::var(key).unwrap_or_default()
-}
-
-/// Return the current value of an environment variable as a string slice list.
-#[allow(dead_code)]
-pub fn env_string_slice(key: &str) -> Vec<String> {
-    match env::var(key) {
-        Ok(value) => value
-            .split([',', ' '])
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToOwned::to_owned)
-            .collect(),
-        Err(_) => Vec::new(),
-    }
-}
-
-/// Return the current value of an environment variable as an integer.
-#[allow(dead_code)]
-pub fn env_int(key: &str) -> i64 {
-    env::var(key)
-        .ok()
-        .and_then(|value| value.trim().parse::<i64>().ok())
-        .unwrap_or_default()
-}
-
-/// Return the current value of an environment variable as a boolean.
-#[allow(dead_code)]
-pub fn env_bool(key: &str) -> bool {
-    match env::var(key) {
-        Ok(value) => matches!(
-            value.trim().to_ascii_lowercase().as_str(),
-            "1" | "true" | "t" | "yes" | "y" | "on"
-        ),
-        Err(_) => false,
-    }
-}
-
-/// Return the current value of an environment variable as a duration.
-#[allow(dead_code)]
-pub fn env_duration(key: &str) -> Duration {
-    env::var(key)
-        .ok()
-        .and_then(|value| parse_duration(&value).ok())
-        .unwrap_or_default()
-}
-
-/// Read the legacy update flags from resolved configuration.
-#[allow(dead_code)]
-pub fn read_flags(config: &WatchtowerConfig) -> (bool, bool, bool, Duration) {
-    (
-        config.update.cleanup,
-        config.update.no_restart,
-        config.update.monitor_only,
-        config.scheduling.stop_timeout,
-    )
-}
-
-/// Parse the legacy duration syntax used by the command line surface.
+/// Parse duration with unit suffixes and plain seconds.
 ///
-/// The accepted forms are:
-/// - plain seconds, for example `60`
-/// - mixed unit suffixes such as `1h30m`, `15m`, `20s`, or `2d`
+/// Accepted forms:
+/// - Plain seconds: `60` → Duration::from_secs(60)
+/// - Mixed units: `1h30m`, `15m`, `20s`, `2d`
+/// - Each unit multiplies before adding to total (e.g. `1h30m` = 1*3600 + 30*60 seconds)
+///
+/// Returns error if:
+/// - Input is empty
+/// - Digits not followed by a valid unit (s/m/h/d) or is the only content
+/// - Overflow would occur
 pub fn parse_duration(input: &str) -> Result<Duration, String> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
@@ -176,6 +127,10 @@ pub fn resolved_log_format(logging: &LoggingConfig) -> ResolvedLogFormat {
 }
 
 /// Apply the logging configuration to the global tracing subscriber.
+///
+/// Initializes tracing with the effective log level and resolved format.
+/// Returns an error if the subscriber was already initialized (which is normal
+/// and can be safely ignored in most contexts).
 pub fn setup_logging(logging: &LoggingConfig) {
     let filter = tracing_subscriber::EnvFilter::new(effective_log_level(logging).to_string());
     let ansi_enabled = !logging.no_color;
@@ -216,7 +171,8 @@ pub fn resolve_secret_references(config: &mut WatchtowerConfig) -> io::Result<()
         expand_optional_secret(config.notifications.slack.hook_url.take())?;
     config.notifications.msteams.hook =
         expand_optional_secret(config.notifications.msteams.hook.take())?;
-    config.notifications.gotify.url = expand_optional_secret(config.notifications.gotify.url.take())?;
+    config.notifications.gotify.url =
+        expand_optional_secret(config.notifications.gotify.url.take())?;
     config.notifications.gotify.token =
         expand_optional_secret(config.notifications.gotify.token.take())?;
     Ok(())
@@ -299,14 +255,26 @@ mod tests {
 
     #[test]
     fn default_interval_matches_legacy_value() {
-        assert_eq!(default_interval(), Duration::from_secs(DEFAULT_INTERVAL_SECONDS));
+        assert_eq!(
+            default_interval(),
+            Duration::from_secs(DEFAULT_INTERVAL_SECONDS)
+        );
     }
 
     #[test]
     fn parse_duration_supports_plain_seconds_and_units() {
-        assert_eq!(parse_duration("60").expect("seconds"), Duration::from_secs(60));
-        assert_eq!(parse_duration("1h30m").expect("units"), Duration::from_secs(5400));
-        assert_eq!(parse_duration("2d").expect("days"), Duration::from_secs(172800));
+        assert_eq!(
+            parse_duration("60").expect("seconds"),
+            Duration::from_secs(60)
+        );
+        assert_eq!(
+            parse_duration("1h30m").expect("units"),
+            Duration::from_secs(5400)
+        );
+        assert_eq!(
+            parse_duration("2d").expect("days"),
+            Duration::from_secs(172800)
+        );
     }
 
     #[test]
@@ -328,8 +296,20 @@ mod tests {
         };
 
         assert_eq!(effective_log_level(&base), LogLevel::Warn);
-        assert_eq!(effective_log_level(&LoggingConfig { debug: true, ..base }), LogLevel::Debug);
-        assert_eq!(effective_log_level(&LoggingConfig { trace: true, ..base }), LogLevel::Trace);
+        assert_eq!(
+            effective_log_level(&LoggingConfig {
+                debug: true,
+                ..base
+            }),
+            LogLevel::Debug
+        );
+        assert_eq!(
+            effective_log_level(&LoggingConfig {
+                trace: true,
+                ..base
+            }),
+            LogLevel::Trace
+        );
     }
 
     #[test]
@@ -345,11 +325,17 @@ mod tests {
 
         assert_eq!(resolved_log_format(&logging), ResolvedLogFormat::Pretty);
         assert_eq!(
-            resolved_log_format(&LoggingConfig { log_format: LogFormat::Json, ..logging }),
+            resolved_log_format(&LoggingConfig {
+                log_format: LogFormat::Json,
+                ..logging
+            }),
             ResolvedLogFormat::Json
         );
         assert_eq!(
-            resolved_log_format(&LoggingConfig { log_format: LogFormat::Logfmt, ..logging }),
+            resolved_log_format(&LoggingConfig {
+                log_format: LogFormat::Logfmt,
+                ..logging
+            }),
             ResolvedLogFormat::Logfmt
         );
     }
@@ -357,7 +343,8 @@ mod tests {
     #[test]
     fn file_references_expand_line_by_line() {
         let file = write_temp_file("secret-list", "alpha\n\n beta \n");
-        let values = expand_secret_list(vec![file.to_string_lossy().into_owned()]).expect("expands");
+        let values =
+            expand_secret_list(vec![file.to_string_lossy().into_owned()]).expect("expands");
 
         assert_eq!(values, vec!["alpha".to_string(), "beta".to_string()]);
     }
@@ -371,8 +358,14 @@ mod tests {
     #[test]
     fn resolve_secret_references_expands_all_secret_fields() {
         let http_token = write_temp_file("http-token", "secret-token\n");
-        let slack_hook = write_temp_file("slack-hook", "https://hooks.slack.com/services/AAA/BBB/CCC\n");
-        let msteams_hook = write_temp_file("msteams-hook", "https://outlook.office.com/webhook/aaa/IncomingWebhook/bbb/ccc\n");
+        let slack_hook = write_temp_file(
+            "slack-hook",
+            "https://hooks.slack.com/services/AAA/BBB/CCC\n",
+        );
+        let msteams_hook = write_temp_file(
+            "msteams-hook",
+            "https://outlook.office.com/webhook/aaa/IncomingWebhook/bbb/ccc\n",
+        );
         let gotify_url = write_temp_file("gotify-url", "https://gotify.local/\n");
         let gotify_token = write_temp_file("gotify-token", "gotify-secret\n");
         let notification_urls = write_temp_file(
@@ -478,7 +471,10 @@ mod tests {
                 "https://example.test/second".to_string(),
             ]
         );
-        assert_eq!(config.notifications.email.password.as_deref(), Some("mail-secret"));
+        assert_eq!(
+            config.notifications.email.password.as_deref(),
+            Some("mail-secret")
+        );
         assert_eq!(
             config.notifications.slack.hook_url.as_deref(),
             Some("https://hooks.slack.com/services/AAA/BBB/CCC")
@@ -491,7 +487,10 @@ mod tests {
             config.notifications.gotify.url.as_deref(),
             Some("https://gotify.local/")
         );
-        assert_eq!(config.notifications.gotify.token.as_deref(), Some("gotify-secret"));
+        assert_eq!(
+            config.notifications.gotify.token.as_deref(),
+            Some("gotify-secret")
+        );
     }
 
     fn write_temp_file(name: &str, content: &str) -> std::path::PathBuf {
@@ -500,7 +499,10 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("system time should be after unix epoch")
             .as_nanos();
-        path.push(format!("watchtower-rs-flags-{name}-{}-{stamp}.txt", std::process::id()));
+        path.push(format!(
+            "watchtower-rs-flags-{name}-{}-{stamp}.txt",
+            std::process::id()
+        ));
         fs::write(&path, content).expect("temp file should be written");
         path
     }

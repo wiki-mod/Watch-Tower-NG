@@ -79,8 +79,7 @@ mod tests {
             TrustDecision::NoWarning
         );
         assert_eq!(
-            trust_decision("localhost:5000/team/image@sha256:deadbeef")
-                .expect("should resolve"),
+            trust_decision("localhost:5000/team/image@sha256:deadbeef").expect("should resolve"),
             TrustDecision::NoWarning
         );
         assert_eq!(
@@ -92,8 +91,7 @@ mod tests {
     #[test]
     fn handles_digest_references_the_same_way_as_tagged_references() {
         assert_eq!(
-            trust_decision("ghcr.io/watchtower/image@sha256:deadbeef")
-                .expect("should resolve"),
+            trust_decision("ghcr.io/watchtower/image@sha256:deadbeef").expect("should resolve"),
             TrustDecision::WarnOnApiConsumption
         );
         assert_eq!(
@@ -118,7 +116,9 @@ mod tests {
     #[test]
     fn boolean_wrapper_matches_the_trust_decision() {
         assert!(warn_on_api_consumption("docker.io/library/nginx:latest").expect("should resolve"));
-        assert!(!warn_on_api_consumption("registry.example.com/team/image:latest")
-            .expect("should resolve"));
+        assert!(
+            !warn_on_api_consumption("registry.example.com/team/image:latest")
+                .expect("should resolve")
+        );
     }
 }

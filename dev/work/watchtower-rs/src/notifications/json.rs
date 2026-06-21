@@ -1,11 +1,11 @@
 #![forbid(unsafe_code)]
 
-use serde::ser::Serializer;
 use serde::Serialize;
+use serde::ser::Serializer;
 use serde_json::{Map, Value};
 
-use crate::types::ContainerReport;
 use super::model::Data;
+use crate::types::ContainerReport;
 
 /// Implements Serialize for Data to produce JSON in the legacy watchtower shape.
 /// This mirrors the behavior of Go's MarshalJSON() method.
@@ -39,20 +39,44 @@ impl Serialize for Data {
         let report_value = match &self.report {
             Some(report) => {
                 let mut report_map = Map::new();
-                report_map.insert("scanned".to_string(), Value::Array(marshal_reports(&report.scanned)));
-                report_map.insert("updated".to_string(), Value::Array(marshal_reports(&report.updated)));
-                report_map.insert("failed".to_string(), Value::Array(marshal_reports(&report.failed)));
-                report_map.insert("skipped".to_string(), Value::Array(marshal_reports(&report.skipped)));
-                report_map.insert("stale".to_string(), Value::Array(marshal_reports(&report.stale)));
-                report_map.insert("fresh".to_string(), Value::Array(marshal_reports(&report.fresh)));
+                report_map.insert(
+                    "scanned".to_string(),
+                    Value::Array(marshal_reports(&report.scanned)),
+                );
+                report_map.insert(
+                    "updated".to_string(),
+                    Value::Array(marshal_reports(&report.updated)),
+                );
+                report_map.insert(
+                    "failed".to_string(),
+                    Value::Array(marshal_reports(&report.failed)),
+                );
+                report_map.insert(
+                    "skipped".to_string(),
+                    Value::Array(marshal_reports(&report.skipped)),
+                );
+                report_map.insert(
+                    "stale".to_string(),
+                    Value::Array(marshal_reports(&report.stale)),
+                );
+                report_map.insert(
+                    "fresh".to_string(),
+                    Value::Array(marshal_reports(&report.fresh)),
+                );
                 Value::Object(report_map)
             }
             None => Value::Null,
         };
 
         root.insert("report".to_string(), report_value);
-        root.insert("title".to_string(), Value::String(self.static_data.title.clone()));
-        root.insert("host".to_string(), Value::String(self.static_data.host.clone()));
+        root.insert(
+            "title".to_string(),
+            Value::String(self.static_data.title.clone()),
+        );
+        root.insert(
+            "host".to_string(),
+            Value::String(self.static_data.host.clone()),
+        );
 
         Value::Object(root).serialize(serializer)
     }

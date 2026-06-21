@@ -1,5 +1,5 @@
-mod flags;
 mod cli;
+mod flags;
 
 use anyhow::Result;
 

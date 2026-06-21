@@ -149,9 +149,8 @@ mod tests {
 
     #[test]
     fn exec_wait_returns_exit_code_for_non_zero_failure() {
-        let outcome = wait_for_exec_or_timeout(Some(Duration::from_secs(1)), "", || {
-            Some((false, 2))
-        });
+        let outcome =
+            wait_for_exec_or_timeout(Some(Duration::from_secs(1)), "", || Some((false, 2)));
 
         assert_eq!(outcome, ExecOutcome::ExitCode(2));
     }

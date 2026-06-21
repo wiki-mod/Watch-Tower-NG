@@ -42,13 +42,11 @@ impl fmt::Display for AuthError {
                 write!(f, "invalid image reference: {reason}")
             }
             Self::InvalidRealm(reason) => write!(f, "invalid auth realm: {reason}"),
-            Self::InvalidChallengeHeader => {
-                f.write_str("challenge header did not include all values needed to construct an auth url")
-            }
+            Self::InvalidChallengeHeader => f.write_str(
+                "challenge header did not include all values needed to construct an auth url",
+            ),
             Self::NoCredentialsAvailable => f.write_str("no credentials available"),
-            Self::UnsupportedChallenge => {
-                f.write_str("unsupported challenge type from registry")
-            }
+            Self::UnsupportedChallenge => f.write_str("unsupported challenge type from registry"),
             Self::ChallengeRequestFailed(reason) => {
                 write!(f, "challenge request failed: {reason}")
             }
@@ -320,7 +318,9 @@ fn scope_image_from_reference(image_ref: &str) -> Result<String, AuthError> {
 }
 
 fn strip_tag_and_digest(image_ref: &str) -> &str {
-    let name_ref = image_ref.split_once('@').map_or(image_ref, |(left, _)| left);
+    let name_ref = image_ref
+        .split_once('@')
+        .map_or(image_ref, |(left, _)| left);
     let slash_pos = name_ref.rfind('/');
     let tag_pos = name_ref.rfind(':');
 
@@ -341,7 +341,10 @@ fn split_registry_and_path(image_ref: &str) -> (String, String) {
             ("index.docker.io".to_string(), image_ref.to_string())
         }
     } else {
-        ("index.docker.io".to_string(), format!("library/{image_ref}"))
+        (
+            "index.docker.io".to_string(),
+            format!("library/{image_ref}"),
+        )
     }
 }
 
@@ -509,7 +512,9 @@ mod tests {
 
             let mut response = String::new();
             write_response(&mut response);
-            stream.write_all(response.as_bytes()).expect("write response");
+            stream
+                .write_all(response.as_bytes())
+                .expect("write response");
         });
 
         ready_rx.recv().expect("wait for ready");

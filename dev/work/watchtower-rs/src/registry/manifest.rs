@@ -189,6 +189,9 @@ mod tests {
         )
         .expect_err("pinned images should be rejected");
 
-        assert!(matches!(err, ManifestUrlError::InvalidImageReference { .. }));
+        assert!(matches!(
+            err,
+            ManifestUrlError::InvalidImageReference { .. }
+        ));
     }
 }

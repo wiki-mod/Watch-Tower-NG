@@ -20,10 +20,9 @@ use std::time::Duration;
 use thiserror::Error;
 
 use crate::notifications::{
-    build_email_url, build_gotify_url, build_slack_url, build_teams_url,
-    get_delay as legacy_get_delay, get_template_data as legacy_get_template_data, EmailSettings,
-    GotifySettings, NotificationUrlError, SlackSettings, StaticData, TemplateDataInput,
-    TeamsSettings,
+    EmailSettings, GotifySettings, NotificationUrlError, SlackSettings, StaticData, TeamsSettings,
+    TemplateDataInput, build_email_url, build_gotify_url, build_slack_url, build_teams_url,
+    get_delay as legacy_get_delay, get_template_data as legacy_get_template_data,
 };
 
 const EMAIL_TYPE: &str = "email";
@@ -254,7 +253,8 @@ pub fn append_legacy_urls(
                 urls.push(build_teams_url(&teams_settings(input))?);
             }
             GOTIFY_TYPE => {
-                urls.push(build_gotify_url(&gotify_settings(input))?);
+                urls.push(build_gotify_url(&gotify_settings(input))
+                    .map_err(|s| NotificationUrlError::InvalidUrl(s))?);
             }
             other => return Err(NotifierError::UnknownNotificationType(other.to_string())),
         }
@@ -440,7 +440,10 @@ mod tests {
 
     #[test]
     fn parse_notification_levels_matches_legacy_names() {
-        assert_eq!(NotificationLogLevel::parse("warn"), Ok(NotificationLogLevel::Warn));
+        assert_eq!(
+            NotificationLogLevel::parse("warn"),
+            Ok(NotificationLogLevel::Warn)
+        );
         assert!(matches!(
             NotificationLogLevel::parse("invalid"),
             Err(NotifierError::InvalidNotificationLevel(level)) if level == "invalid"

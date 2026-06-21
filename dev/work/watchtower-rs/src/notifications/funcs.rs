@@ -25,9 +25,8 @@ pub fn template_title(s: &str) -> String {
 /// Serializes the input value to a pretty-printed JSON string.
 /// If serialization fails, returns an error message in the same format as the Go version.
 pub fn template_to_json<T: Serialize + ?Sized>(v: &T) -> String {
-    serde_json::to_string_pretty(v).unwrap_or_else(|err| {
-        format!("failed to marshal JSON in notification template: {}", err)
-    })
+    serde_json::to_string_pretty(v)
+        .unwrap_or_else(|err| format!("failed to marshal JSON in notification template: {}", err))
 }
 
 #[cfg(test)]

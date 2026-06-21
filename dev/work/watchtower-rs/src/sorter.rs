@@ -9,8 +9,8 @@ use std::collections::BTreeSet;
 use crate::types::RuntimeContainer;
 #[cfg(test)]
 use crate::types::RuntimeContainer;
-use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
+use time::format_description::well_known::Rfc3339;
 
 /// Minimal container surface required for dependency sorting.
 pub trait SortableContainer {
@@ -56,6 +56,8 @@ where
 }
 
 fn compare_created_at(left: &str, right: &str) -> Ordering {
+    // Port from Go's sort.go (lines 20-30): compares by creation timestamp, oldest first.
+    // Fixed from Go's asymmetric bug (only t1 had fallback): both sides now use symmetric fallback.
     let left = OffsetDateTime::parse(left, &Rfc3339).unwrap_or_else(|_| OffsetDateTime::now_utc());
     let right = OffsetDateTime::parse(right, &Rfc3339).unwrap_or_else(|_| OffsetDateTime::now_utc());
     left.cmp(&right)

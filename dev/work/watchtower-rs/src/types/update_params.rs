@@ -63,8 +63,8 @@ impl fmt::Debug for UpdateParams {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::filterable_container::FilterableContainer;
+    use super::*;
 
     struct MockContainer {
         name: String,

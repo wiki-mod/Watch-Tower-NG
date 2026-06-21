@@ -165,13 +165,11 @@ fn digest_from_response(status_line: &str, headers: HashMap<String, String>) -> 
         });
     }
 
-    Ok(
-        response
-            .headers
-            .get(&CONTENT_DIGEST_HEADER.to_ascii_lowercase())
-            .cloned()
-            .unwrap_or_default(),
-    )
+    Ok(response
+        .headers
+        .get(&CONTENT_DIGEST_HEADER.to_ascii_lowercase())
+        .cloned()
+        .unwrap_or_default())
 }
 
 fn head_request_http(parsed: &ParsedUrl, token: &str) -> Result<HttpResponse> {
@@ -414,7 +412,6 @@ fn encode_base64_standard(input: &[u8]) -> String {
     output
 }
 
-
 #[derive(Debug)]
 struct ParsedUrl {
     scheme: String,
@@ -550,12 +547,15 @@ mod tests {
     fn get_digest_uses_head_and_returns_content_digest() {
         let server = spawn_test_server(
             |request| {
-                assert!(request.starts_with("HEAD /v2/library/watchtower/manifests/latest HTTP/1.1"));
+                assert!(
+                    request.starts_with("HEAD /v2/library/watchtower/manifests/latest HTTP/1.1")
+                );
                 assert!(request.contains(&format!("User-Agent: {}", meta::user_agent())));
                 assert!(request.contains("Authorization: Bearer token"));
-                assert!(request.contains(
-                    "Accept: application/vnd.docker.distribution.manifest.v2+json"
-                ));
+                assert!(
+                    request
+                        .contains("Accept: application/vnd.docker.distribution.manifest.v2+json")
+                );
             },
             |response| {
                 response.push_str("HTTP/1.1 200 OK\r\n");
@@ -565,7 +565,10 @@ mod tests {
         );
 
         let digest = get_digest(
-            &format!("http://{}/v2/library/watchtower/manifests/latest", server.addr),
+            &format!(
+                "http://{}/v2/library/watchtower/manifests/latest",
+                server.addr
+            ),
             "Bearer token",
         )
         .expect("digest should be returned");
@@ -577,7 +580,9 @@ mod tests {
     fn get_digest_reports_registry_error_details() {
         let server = spawn_test_server(
             |request| {
-                assert!(request.starts_with("HEAD /v2/library/watchtower/manifests/latest HTTP/1.1"));
+                assert!(
+                    request.starts_with("HEAD /v2/library/watchtower/manifests/latest HTTP/1.1")
+                );
             },
             |response| {
                 response.push_str("HTTP/1.1 401 Unauthorized\r\n");
@@ -587,7 +592,10 @@ mod tests {
         );
 
         let err = get_digest(
-            &format!("http://{}/v2/library/watchtower/manifests/latest", server.addr),
+            &format!(
+                "http://{}/v2/library/watchtower/manifests/latest",
+                server.addr
+            ),
             "Bearer token",
         )
         .expect_err("should surface the status code");
@@ -635,11 +643,12 @@ mod tests {
 
         let matches = compare_digest_with_url(
             &repo_digests,
-            &format!("http://{}/v2/library/watchtower/manifests/latest", server.addr),
+            &format!(
+                "http://{}/v2/library/watchtower/manifests/latest",
+                server.addr
+            ),
             &registry_auth,
-            &MockTokenSource {
-                expected_basic,
-            },
+            &MockTokenSource { expected_basic },
         )
         .expect("comparison should succeed");
 
@@ -677,11 +686,12 @@ mod tests {
 
         let matches = compare_digest_with_url(
             &repo_digests,
-            &format!("http://{}/v2/library/watchtower/manifests/latest", server.addr),
+            &format!(
+                "http://{}/v2/library/watchtower/manifests/latest",
+                server.addr
+            ),
             &registry_auth,
-            &MockTokenSource {
-                expected_basic,
-            },
+            &MockTokenSource { expected_basic },
         )
         .expect("comparison should succeed");
 
@@ -710,7 +720,9 @@ mod tests {
 
             let mut response = String::new();
             write_response(&mut response);
-            stream.write_all(response.as_bytes()).expect("write response");
+            stream
+                .write_all(response.as_bytes())
+                .expect("write response");
         });
 
         ready_rx.recv().expect("wait for ready");

@@ -49,13 +49,6 @@ impl Progress {
             .state = State::Updated;
     }
 
-    /// Mark a previously scanned container as skipped.
-    pub fn mark_skipped(&mut self, container_id: &ContainerID, err: impl ToString) {
-        if let Some(entry) = self.entries.get_mut(container_id) {
-            entry.state = State::Skipped;
-            entry.error = Some(err.to_string());
-        }
-    }
 
     /// Mark containers as failed.
     pub fn update_failed<E>(&mut self, failures: impl IntoIterator<Item = (ContainerID, E)>)
@@ -86,8 +79,8 @@ impl From<Progress> for Report {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::container_status::ContainerLike;
+    use super::*;
     use crate::types::ContainerID;
 
     #[derive(Clone)]

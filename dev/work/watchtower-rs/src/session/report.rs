@@ -110,7 +110,7 @@ mod tests {
         progress.mark_for_update(updated.id());
         progress.mark_for_update(failed.id());
         progress.update_failed([(failed.id().clone(), "network error")]);
-        progress.mark_skipped(skipped.id(), "container disappeared");
+        progress.add_skipped(&skipped, "container disappeared");
 
         let report = progress.report();
 

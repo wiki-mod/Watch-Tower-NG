@@ -37,8 +37,9 @@ mod tests {
     fn rand_name_uses_only_letters() {
         let name = rand_name();
 
-        assert!(name
-            .chars()
-            .all(|ch| ch.is_ascii_alphabetic() && ch.is_ascii()));
+        assert!(
+            name.chars()
+                .all(|ch| ch.is_ascii_alphabetic() && ch.is_ascii())
+        );
     }
 }

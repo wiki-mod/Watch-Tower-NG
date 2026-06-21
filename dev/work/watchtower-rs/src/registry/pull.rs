@@ -8,8 +8,8 @@
 
 use crate::types::FilterableContainer;
 
-use super::digest::DigestError;
 use super::credentials;
+use super::digest::DigestError;
 use super::trust;
 
 /// Signature used for retrying a pull without authentication.
@@ -134,10 +134,9 @@ mod tests {
 
     #[test]
     fn get_pull_options_returns_the_default_shape() {
-        let options = get_pull_options_with_resolver("ghcr.io/watchtower/image:latest", || {
-            Ok(String::new())
-        })
-        .expect("default options should resolve");
+        let options =
+            get_pull_options_with_resolver("ghcr.io/watchtower/image:latest", || Ok(String::new()))
+                .expect("default options should resolve");
 
         assert_eq!(options.registry_auth, "");
         assert!(options.privilege_func.is_none());
@@ -150,25 +149,21 @@ mod tests {
 
     #[test]
     fn decides_to_skip_when_digests_match() {
-        assert_eq!(
-            decide_pull_action(Ok(true), false),
-            PullDecision::SkipPull
-        );
+        assert_eq!(decide_pull_action(Ok(true), false), PullDecision::SkipPull);
     }
 
     #[test]
     fn decides_to_pull_when_digests_differ() {
-        assert_eq!(
-            decide_pull_action(Ok(false), false),
-            PullDecision::Pull
-        );
+        assert_eq!(decide_pull_action(Ok(false), false), PullDecision::Pull);
     }
 
     #[test]
     fn decides_to_fall_back_when_head_check_fails() {
         assert_eq!(
             decide_pull_action(
-                Err(DigestError::RequestFailed("dial tcp: lookup registry".to_string())),
+                Err(DigestError::RequestFailed(
+                    "dial tcp: lookup registry".to_string()
+                )),
                 true
             ),
             PullDecision::HeadCheckFailed {
@@ -201,10 +196,11 @@ mod tests {
 
     #[test]
     fn get_pull_options_enables_privilege_retry_when_auth_is_available() {
-        let options = get_pull_options_with_resolver("registry.example.com/team/image:latest", || {
-            Ok("auth-token".to_string())
-        })
-        .expect("auth options should resolve");
+        let options =
+            get_pull_options_with_resolver("registry.example.com/team/image:latest", || {
+                Ok("auth-token".to_string())
+            })
+            .expect("auth options should resolve");
 
         assert_eq!(options.registry_auth, "auth-token");
         assert!(options.privilege_func.is_some());

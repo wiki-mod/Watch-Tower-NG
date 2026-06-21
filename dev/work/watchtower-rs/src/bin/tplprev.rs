@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 
-use go_template::{from_value, Context, Func, FuncError, Template, Value};
+use go_template::{Context, Func, FuncError, Template, Value, from_value};
 use rand::rngs::StdRng;
 use rand::{Rng, RngCore, SeedableRng};
 use serde_json::{Map as JsonMap, Number as JsonNumber, Value as JsonValue};
@@ -322,7 +322,10 @@ impl ContainerReportData {
             "LatestImageID".to_string(),
             image_id_value(&self.latest_image_id),
         );
-        map.insert("ImageName".to_string(), Value::from(self.image_name.clone()));
+        map.insert(
+            "ImageName".to_string(),
+            Value::from(self.image_name.clone()),
+        );
         map.insert("Error".to_string(), Value::from(self.error.clone()));
         map.insert("State".to_string(), Value::from(self.state.as_str()));
         Value::from(map)
@@ -382,12 +385,30 @@ impl ReportData {
 
     fn to_value(&self) -> Value {
         let mut map = HashMap::new();
-        map.insert("Scanned".to_string(), list_value(self.scanned.iter().map(ContainerReportData::to_value)));
-        map.insert("Updated".to_string(), list_value(self.updated.iter().map(ContainerReportData::to_value)));
-        map.insert("Failed".to_string(), list_value(self.failed.iter().map(ContainerReportData::to_value)));
-        map.insert("Skipped".to_string(), list_value(self.skipped.iter().map(ContainerReportData::to_value)));
-        map.insert("Stale".to_string(), list_value(self.stale.iter().map(ContainerReportData::to_value)));
-        map.insert("Fresh".to_string(), list_value(self.fresh.iter().map(ContainerReportData::to_value)));
+        map.insert(
+            "Scanned".to_string(),
+            list_value(self.scanned.iter().map(ContainerReportData::to_value)),
+        );
+        map.insert(
+            "Updated".to_string(),
+            list_value(self.updated.iter().map(ContainerReportData::to_value)),
+        );
+        map.insert(
+            "Failed".to_string(),
+            list_value(self.failed.iter().map(ContainerReportData::to_value)),
+        );
+        map.insert(
+            "Skipped".to_string(),
+            list_value(self.skipped.iter().map(ContainerReportData::to_value)),
+        );
+        map.insert(
+            "Stale".to_string(),
+            list_value(self.stale.iter().map(ContainerReportData::to_value)),
+        );
+        map.insert(
+            "Fresh".to_string(),
+            list_value(self.fresh.iter().map(ContainerReportData::to_value)),
+        );
         map.insert(
             "All".to_string(),
             list_value(self.all().into_iter().map(|report| report.to_value())),
@@ -528,7 +549,10 @@ impl PreviewData {
 
     fn to_value(&self) -> Value {
         let mut map = HashMap::new();
-        map.insert("Entries".to_string(), list_value(self.entries.iter().map(LogEntryData::to_value)));
+        map.insert(
+            "Entries".to_string(),
+            list_value(self.entries.iter().map(LogEntryData::to_value)),
+        );
         map.insert("StaticData".to_string(), self.static_data.to_value());
         map.insert(
             "Report".to_string(),
@@ -710,10 +734,7 @@ fn format_time(time: OffsetDateTime) -> String {
 }
 
 fn states_from_string(input: &str) -> Vec<State> {
-    input
-        .chars()
-        .filter_map(State::from_compact_char)
-        .collect()
+    input.chars().filter_map(State::from_compact_char).collect()
 }
 
 fn levels_from_string(input: &str) -> Vec<LogLevel> {
@@ -767,22 +788,16 @@ pub fn start() -> Result<(), JsValue> {
 #[cfg(target_arch = "wasm32")]
 fn install_watchtower_global() -> Result<(), JsValue> {
     let watchtower = Object::new();
-    let tplprev = Closure::wrap(Box::new(move |input: JsValue, states: JsValue, levels: JsValue| {
-        let response = js_tplprev(input, states, levels);
-        response
-    }) as Box<dyn FnMut(JsValue, JsValue, JsValue) -> JsValue>);
+    let tplprev = Closure::wrap(
+        Box::new(move |input: JsValue, states: JsValue, levels: JsValue| {
+            let response = js_tplprev(input, states, levels);
+            response
+        }) as Box<dyn FnMut(JsValue, JsValue, JsValue) -> JsValue>,
+    );
 
     let global = js_sys::global();
-    Reflect::set(
-        &global,
-        &JsValue::from_str("WATCHTOWER"),
-        &watchtower,
-    )?;
-    Reflect::set(
-        &watchtower,
-        &JsValue::from_str("tplprev"),
-        tplprev.as_ref(),
-    )?;
+    Reflect::set(&global, &JsValue::from_str("WATCHTOWER"), &watchtower)?;
+    Reflect::set(&watchtower, &JsValue::from_str("tplprev"), tplprev.as_ref())?;
     tplprev.forget();
     Ok(())
 }
