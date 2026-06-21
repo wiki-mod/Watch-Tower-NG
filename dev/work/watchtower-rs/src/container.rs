@@ -712,9 +712,8 @@ impl crate::filters::FilterableContainer for Container {
         self.enabled()
     }
 
-    fn scope(&self) -> (Option<&str>, bool) {
-        let scope = self.scope();
-        (scope, scope.is_some())
+    fn scope(&self) -> Option<&str> {
+        self.scope()
     }
 
     fn image_name(&self) -> &str {
