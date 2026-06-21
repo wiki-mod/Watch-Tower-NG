@@ -32,6 +32,8 @@ pub mod notify_upgrade;
 pub mod notifications;
 pub mod startup;
 pub mod util;
+pub mod rand_name;
+pub mod rand_sha256;
 pub mod wait;
 pub mod sorter;
 pub mod session;
