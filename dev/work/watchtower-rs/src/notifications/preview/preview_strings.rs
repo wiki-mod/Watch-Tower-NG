@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 pub(crate) static CONTAINER_NAMES: &[&str] = &[
     "cyberscribe",
     "datamatrix",

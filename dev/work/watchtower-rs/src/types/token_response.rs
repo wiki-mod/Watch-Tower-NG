@@ -7,8 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Token payload returned by registry auth endpoints.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenResponse {
-    #[serde(default)]
     pub token: String,
 }

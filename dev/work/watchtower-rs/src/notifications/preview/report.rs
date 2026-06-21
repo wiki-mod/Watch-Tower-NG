@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 #![allow(dead_code)]
 
 use std::collections::HashSet;
@@ -93,11 +94,11 @@ impl Report {
         let mut present_ids: HashSet<ContainerID> = HashSet::new();
         let mut append_unique = |reports: &[ContainerReport]| {
             for cr in reports {
-                if present_ids.contains(cr.id()) {
+                if present_ids.contains(&cr.id()) {
                     continue;
                 }
                 all.push(cr.clone());
-                present_ids.insert(cr.id.clone());
+                present_ids.insert(cr.id());
             }
         };
 

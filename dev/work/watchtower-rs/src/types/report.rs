@@ -22,38 +22,38 @@ pub struct ContainerReport {
 
 impl ContainerReport {
     /// Return the reported container ID.
-    pub fn id(&self) -> &ContainerID {
-        &self.id
+    pub fn id(&self) -> ContainerID {
+        self.id.clone()
     }
 
     /// Return the reported container name.
-    pub fn name(&self) -> &str {
-        self.name.as_str()
+    pub fn name(&self) -> String {
+        self.name.clone()
     }
 
     /// Return the current image ID.
-    pub fn current_image_id(&self) -> &ImageID {
-        &self.current_image_id
+    pub fn current_image_id(&self) -> ImageID {
+        self.current_image_id.clone()
     }
 
     /// Return the latest image ID.
-    pub fn latest_image_id(&self) -> &ImageID {
-        &self.latest_image_id
+    pub fn latest_image_id(&self) -> ImageID {
+        self.latest_image_id.clone()
     }
 
     /// Return the image name associated with the report.
-    pub fn image_name(&self) -> &str {
-        self.image_name.as_str()
+    pub fn image_name(&self) -> String {
+        self.image_name.clone()
     }
 
     /// Return the recorded error text, or an empty string when the report has no error.
-    pub fn error(&self) -> &str {
-        self.error.as_deref().unwrap_or("")
+    pub fn error(&self) -> String {
+        self.error.clone().unwrap_or_default()
     }
 
     /// Return the recorded state string.
-    pub fn state(&self) -> &str {
-        self.state.as_str()
+    pub fn state(&self) -> String {
+        self.state.clone()
     }
 
     /// True when the report recorded an error.
@@ -224,16 +224,16 @@ mod tests {
         assert_eq!(report.current_image_id().as_str(), "old-image");
         assert_eq!(report.latest_image_id().as_str(), "new-image");
         assert_eq!(report.image_name(), "example/image:latest");
-        assert_eq!(report.error(), "boom");
+        assert_eq!(report.error(), "boom".to_string());
         assert_eq!(report.state(), "Failed");
         assert!(report.has_error());
 
         let no_error = ContainerReport {
             error: None,
-            ..report
+            ..report.clone()
         };
 
-        assert_eq!(no_error.error(), "");
+        assert_eq!(no_error.error(), "".to_string());
         assert!(!no_error.has_error());
     }
 
