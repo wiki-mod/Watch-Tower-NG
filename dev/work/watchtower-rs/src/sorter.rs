@@ -57,7 +57,7 @@ where
 
 fn compare_created_at(left: &str, right: &str) -> Ordering {
     let left = OffsetDateTime::parse(left, &Rfc3339).unwrap_or_else(|_| OffsetDateTime::now_utc());
-    let right = OffsetDateTime::parse(right, &Rfc3339).unwrap_or(OffsetDateTime::UNIX_EPOCH);
+    let right = OffsetDateTime::parse(right, &Rfc3339).unwrap_or_else(|_| OffsetDateTime::now_utc());
     left.cmp(&right)
 }
 

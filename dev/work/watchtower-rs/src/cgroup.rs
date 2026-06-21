@@ -1,7 +1,6 @@
 #![forbid(unsafe_code)]
 
 use std::fs;
-use std::io;
 use std::process;
 use std::sync::OnceLock;
 
@@ -18,11 +17,15 @@ fn docker_container_pattern() -> &'static Regex {
     })
 }
 
-pub fn get_running_container_id() -> io::Result<Option<ContainerID>> {
-    let file = fs::read_to_string(format!("/proc/{}/cgroup", process::id()))?;
-    Ok(get_running_container_id_from_string(&file))
+/// Get the running container ID from the current process cgroup information.
+/// Returns None if the process is not running in a container or if cgroup cannot be read.
+pub fn get_running_container_id() -> Option<ContainerID> {
+    let file = fs::read_to_string(format!("/proc/{}/cgroup", process::id())).ok()?;
+    get_running_container_id_from_string(&file)
 }
 
+/// Extract container ID from cgroup string.
+/// Returns None if the container ID pattern is not found in the string.
 pub fn get_running_container_id_from_string(contents: &str) -> Option<ContainerID> {
     docker_container_pattern()
         .captures(contents)
