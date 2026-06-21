@@ -312,7 +312,7 @@ fn restart_stale_container(
             })?;
 
         if container.to_restart() && params.lifecycle_hooks {
-            let _ = lifecycle::execute_post_update_command(client, &new_container_id);
+            lifecycle::execute_post_update_command(client, &new_container_id);
         }
     }
 

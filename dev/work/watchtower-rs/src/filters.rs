@@ -12,17 +12,17 @@
 
 use regex::Regex;
 
-/// A boxed filter predicate.
-pub type Filter<'a, C> = Box<dyn Fn(&C) -> bool + 'a>;
-
 /// Minimal container view required by the legacy filter logic.
 pub trait FilterableContainer {
     fn name(&self) -> &str;
     fn is_watchtower(&self) -> bool;
     fn enabled(&self) -> (bool, bool);
-    fn scope(&self) -> (Option<&str>, bool);
+    fn scope(&self) -> Option<&str>;
     fn image_name(&self) -> &str;
 }
+
+/// A boxed filter predicate.
+pub type Filter<'a, C> = Box<dyn Fn(&C) -> bool + 'a>;
 
 /// Filters only Watchtower containers.
 pub fn watchtower_containers_filter<C: FilterableContainer + ?Sized>(container: &C) -> bool {
@@ -129,14 +129,16 @@ where
     C: FilterableContainer + ?Sized + 'a,
 {
     Box::new(move |container| {
-        let (container_scope, has_scope) = container.scope();
-        let container_scope = if !has_scope || container_scope.is_none() || container_scope == Some("") {
-            "none"
-        } else {
-            container_scope.unwrap_or("none")
+        let container_scope = match container.scope() {
+            None | Some("") => "none",
+            Some(s) => s,
         };
 
-        container_scope == scope && base_filter(container)
+        if container_scope == scope {
+            base_filter(container)
+        } else {
+            false
+        }
     })
 }
 
@@ -279,7 +281,7 @@ mod tests {
         name: String,
         watchtower: bool,
         enabled: (bool, bool),
-        scope: (Option<String>, bool),
+        scope: Option<String>,
         image: String,
     }
 
@@ -296,8 +298,8 @@ mod tests {
             self.enabled
         }
 
-        fn scope(&self) -> (Option<&str>, bool) {
-            (self.scope.0.as_deref(), self.scope.1)
+        fn scope(&self) -> Option<&str> {
+            self.scope.as_deref()
         }
 
         fn image_name(&self) -> &str {
@@ -310,9 +312,14 @@ mod tests {
             name: name.to_string(),
             watchtower: false,
             enabled: (false, false),
-            scope: (None, false),
+            scope: None,
             image: String::new(),
         }
+    }
+
+    // Helper to create Box<Filter<'_, Container>> with a zero-closure.
+    fn null_filter() -> Filter<'static, Container> {
+        Box::new(no_filter::<Container>)
     }
 
     #[test]
@@ -333,7 +340,7 @@ mod tests {
     #[test]
     fn filter_by_names_matches_exact_and_regex_like_patterns() {
         let names = vec!["test".to_string(), "ba(b|ll)oon".to_string()];
-        let filter = filter_by_names(&names, Box::new(no_filter::<Container>));
+        let filter = filter_by_names::<Container>(&names, null_filter());
 
         assert!(filter(&container("test")));
         assert!(filter(&container("/test")));
@@ -345,7 +352,7 @@ mod tests {
     #[test]
     fn filter_by_names_keeps_legacy_leading_slash_regex_boundary() {
         let names = vec!["oo$".to_string()];
-        let filter = filter_by_names(&names, Box::new(no_filter::<Container>));
+        let filter = filter_by_names::<Container>(&names, null_filter());
 
         assert!(!filter(&container("/foo")));
     }
@@ -353,7 +360,7 @@ mod tests {
     #[test]
     fn filter_by_disable_names_uses_exact_name_matching_only() {
         let names = vec!["excluded".to_string()];
-        let filter = filter_by_disable_names(&names, Box::new(no_filter::<Container>));
+        let filter = filter_by_disable_names::<Container>(&names, null_filter());
 
         assert!(!filter(&container("excluded")));
         assert!(!filter(&container("/excluded")));
@@ -362,8 +369,8 @@ mod tests {
 
     #[test]
     fn label_filters_follow_legacy_rules() {
-        let enable_filter = filter_by_enable_label(Box::new(no_filter::<Container>));
-        let disabled_filter = filter_by_disabled_label(Box::new(no_filter::<Container>));
+        let enable_filter = filter_by_enable_label::<Container>(null_filter());
+        let disabled_filter = filter_by_disabled_label::<Container>(null_filter());
 
         let enabled_true = Container {
             enabled: (true, true),
@@ -389,22 +396,22 @@ mod tests {
 
     #[test]
     fn filter_by_scope_treats_missing_and_empty_scope_as_none() {
-        let filter = filter_by_scope("none", Box::new(no_filter::<Container>));
+        let filter = filter_by_scope::<Container>("none", null_filter());
 
         let missing = Container {
-            scope: (None, false),
+            scope: None,
             ..container("missing")
         };
         let empty = Container {
-            scope: (Some(String::new()), true),
+            scope: Some(String::new()),
             ..container("empty")
         };
         let explicit_none = Container {
-            scope: (Some("none".to_string()), true),
+            scope: Some("none".to_string()),
             ..container("none")
         };
         let other = Container {
-            scope: (Some("team".to_string()), true),
+            scope: Some("team".to_string()),
             ..container("team")
         };
 
@@ -417,8 +424,8 @@ mod tests {
     #[test]
     fn filter_by_image_ignores_tags_and_preserves_base_filter() {
         let images = vec!["registry".to_string(), "other".to_string()];
-        let filter = filter_by_image(Some(&images), Box::new(no_filter::<Container>));
-        let no_images = filter_by_image(None, Box::new(no_filter::<Container>));
+        let filter = filter_by_image::<Container>(Some(&images), null_filter());
+        let no_images = filter_by_image::<Container>(None, null_filter());
 
         let registry_tagged = Container {
             image: "registry:latest".to_string(),
@@ -472,17 +479,17 @@ mod tests {
 
         let scoped = Container {
             enabled: (false, false),
-            scope: (Some("anyscope".to_string()), true),
+            scope: Some("anyscope".to_string()),
             ..container("scoped")
         };
         let empty_scope = Container {
             enabled: (false, false),
-            scope: (Some(String::new()), true),
+            scope: Some(String::new()),
             ..container("empty")
         };
         let unscoped = Container {
             enabled: (false, false),
-            scope: (None, false),
+            scope: None,
             ..container("unscoped")
         };
 

@@ -143,7 +143,7 @@ pub fn execute_pre_update_command<C: LifecycleClient>(
 pub fn execute_post_update_command<C: LifecycleClient>(
     client: &C,
     new_container_id: &ContainerID,
-) -> std::result::Result<(), C::Error> {
+) {
     let new_container = match client.get_container(new_container_id) {
         Ok(container) => container,
         Err(_) => {
@@ -151,7 +151,7 @@ pub fn execute_post_update_command<C: LifecycleClient>(
                 container_id = %new_container_id.short_id(),
                 "post-update container lookup failed"
             );
-            return Ok(());
+            return;
         }
     };
     let timeout = new_container.post_update_timeout();
@@ -162,7 +162,7 @@ pub fn execute_post_update_command<C: LifecycleClient>(
             container = new_container.name(),
             "No post-update command supplied. Skipping"
         );
-        return Ok(());
+        return;
     }
 
     debug!(
@@ -175,8 +175,6 @@ pub fn execute_post_update_command<C: LifecycleClient>(
     {
         error!(container = new_container.name(), "post-update command failed");
     }
-
-    Ok(())
 }
 
 #[cfg(test)]
@@ -436,8 +434,7 @@ mod tests {
             .with_get_result(&container_id, Ok(container))
             .with_exec_results([Ok(false)]);
 
-        execute_post_update_command(&client, &container_id)
-            .expect("post-update command errors are swallowed");
+        execute_post_update_command(&client, &container_id);
 
         assert_eq!(
             client.exec_calls(),
@@ -464,10 +461,8 @@ mod tests {
             .with_get_result(&failing_container_id, Ok(failing_container))
             .with_exec_results([Err(MockError::CommandFailed)]);
 
-        execute_post_update_command(&client, &missing_container_id)
-            .expect("lookup errors are swallowed like the Go code");
-        execute_post_update_command(&client, &failing_container_id)
-            .expect("command errors are swallowed like the Go code");
+        execute_post_update_command(&client, &missing_container_id);
+        execute_post_update_command(&client, &failing_container_id);
 
         assert_eq!(
             client.exec_calls(),
