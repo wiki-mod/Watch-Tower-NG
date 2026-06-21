@@ -1,38 +1,56 @@
 ## Prerequisites
-To contribute code changes to this project you will need the following development kits.
- * [Go](https://golang.org/doc/install)
- * [Docker](https://docs.docker.com/engine/installation/)
- 
-As watchtower utilizes go modules for vendor locking, you'll need at least Go 1.11.
-You can check your current version of the go language as follows:
+
+To contribute code changes to this project you will need the following:
+
+* [Rust](https://www.rust-lang.org/tools/install) (minimum version: 1.85, install via `rustup`)
+* [Docker](https://docs.docker.com/engine/installation/)
+
+Check your Rust version:
 ```bash
-  ~ $ go version
-  go version go1.12.1 darwin/amd64
+rustc --version
+# rustc 1.85.0 (...)
 ```
 
-
 ## Checking out the code
-Do not place your code in the go source path.
+
 ```bash
-git clone git@github.com:<yourfork>/watchtower.git
-cd watchtower
+git clone git@github.com:<yourfork>/Watch-Tower-NG.git
+cd Watch-Tower-NG
 ```
 
 ## Building and testing
-watchtower is a go application and is built with go commands. The following commands assume that you are at the root level of your repo.
+
+All build commands run from `dev/work/watchtower-rs/`. Load the local sccache config first (optional but recommended):
+
 ```bash
-go build                               # compiles and packages an executable binary, watchtower
-go test ./... -v                       # runs tests with verbose output
-./watchtower                           # runs the application (outside of a container)
+# Load local sccache config (Git Bash, one-time per shell)
+source dev/runtime/local.env
+
+# Build
+cargo build
+
+# Run all tests
+cargo test
+
+# Lint (warnings treated as errors)
+cargo clippy -- -D warnings
+
+# Run a single test by name
+cargo test <testname>
 ```
 
-If you dont have it enabled, you'll either have to prefix each command with `GO111MODULE=on` or run `export GO111MODULE=on` before running the commands. [You can read more about modules here.](https://github.com/golang/go/wiki/Modules)
+## Building the Docker image
 
-To build a Watchtower image of your own, use the self-contained Dockerfiles. As the main Dockerfile, they can be found in `dockerfiles/`:
-- `dockerfiles/Dockerfile.dev-self-contained` will build an image based on your current local Watchtower files.
-- `dockerfiles/Dockerfile.self-contained` will build an image based on current Watchtower's repository on GitHub.
-
-e.g.:
 ```bash
-sudo docker build . -f dockerfiles/Dockerfile.dev-self-contained -t marrrrrrrrry/watchtower # to build an image from local files
+docker build . -f dockerfiles/Dockerfile.dev-self-contained -t wiki-mod/watch-tower-ng
 ```
+
+## Code style
+
+* `#![forbid(unsafe_code)]` is enforced across the entire crate — no unsafe blocks.
+* Warnings are errors: `cargo clippy -- -D warnings` must pass clean.
+* 1:1 porting rule: every Go source file maps to exactly one Rust target file.
+
+## License
+
+This project is licensed under the Apache License, Version 2.0. See `LICENSE` and `NOTICE` at the repository root.

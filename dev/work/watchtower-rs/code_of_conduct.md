@@ -1,3 +1,5 @@
-### Containrrr Community Code of Conduct
+### Watch-Tower-NG Code of Conduct
 
-Please refer to out [Containrrr Community Code of Conduct](https://github.com/containrrr/.github/blob/master/CODE_OF_CONDUCT.md)
+This project follows the [Contributor Covenant Code of Conduct](https://www.contributor-covenant.org/version/2/1/code_of_conduct/).
+
+By participating in this project you agree to abide by its terms.

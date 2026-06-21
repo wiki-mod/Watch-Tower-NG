@@ -16,7 +16,7 @@ use super::trust;
 pub type AuthHandler = fn() -> String;
 
 /// Minimal pull options used by the registry client slice.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct PullOptions {
     /// Base64-encoded registry auth payload, when available.
     pub registry_auth: String,

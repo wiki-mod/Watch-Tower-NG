@@ -227,6 +227,7 @@ impl ShoutrrrNotifier {
         ))
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn create_with_router<R, D>(
         urls: Vec<String>,
         level: NotificationLogLevel,

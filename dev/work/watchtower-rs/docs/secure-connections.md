@@ -10,5 +10,5 @@ docker run -d \
   -e DOCKER_HOST=$DOCKER_HOST \
   -e DOCKER_CERT_PATH=/etc/ssl/docker \
   -v $DOCKER_CERT_PATH:/etc/ssl/docker \
-  marrrrrrrrry/watchtower --tlsverify
+  wiki-mod/watch-tower-ng --tlsverify
 ```

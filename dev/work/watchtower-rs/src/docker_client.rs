@@ -33,25 +33,13 @@ const DEFAULT_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const DEFAULT_STOP_SIGNAL: &str = "SIGTERM";
 
 /// Client configuration mirrored from the legacy Go wrapper.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ClientOptions {
     pub remove_volumes: bool,
     pub include_stopped: bool,
     pub revive_stopped: bool,
     pub include_restarting: bool,
     pub warn_on_head_failed: WarningStrategy,
-}
-
-impl Default for ClientOptions {
-    fn default() -> Self {
-        Self {
-            remove_volumes: false,
-            include_stopped: false,
-            revive_stopped: false,
-            include_restarting: false,
-            warn_on_head_failed: WarningStrategy::default(),
-        }
-    }
 }
 
 /// Docker CLI transport errors.
@@ -1766,17 +1754,12 @@ fn trim_container_name(name: &str) -> &str {
 }
 
 /// Strategy used when deciding whether a failed HEAD request should warn.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum WarningStrategy {
     Always,
     Never,
+    #[default]
     Auto,
-}
-
-impl Default for WarningStrategy {
-    fn default() -> Self {
-        Self::Auto
-    }
 }
 
 /// Container-network endpoint snapshot.
@@ -2071,10 +2054,10 @@ mod tests {
         let script = format!("#!/bin/sh\nset -eu\n{body}\n");
         fs::write(&script_path, script).expect("script");
 
-        let mut perms = fs::metadata(&script_path).expect("metadata").permissions();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
+            let mut perms = fs::metadata(&script_path).expect("metadata").permissions();
             perms.set_mode(0o755);
             fs::set_permissions(&script_path, perms).expect("chmod");
         }
@@ -2249,6 +2232,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn stale_check_keeps_has_new_image_path_when_no_pull_is_enabled() {
         let dir = unique_temp_dir("no-pull");
@@ -2279,6 +2263,7 @@ mod tests {
         assert!(!log.contains("pull registry.example.com/team/app:latest"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn start_container_recreates_from_snapshot_without_old_container_inspect_or_remove() {
         let dir = unique_temp_dir("start");
@@ -2306,6 +2291,7 @@ mod tests {
         assert!(!log.contains("rm --force old-container-id"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn get_container_rewrites_container_network_parent_id_to_parent_name() {
         let dir = unique_temp_dir("network-parent");

@@ -6,12 +6,12 @@ use std::net::TcpStream;
 use std::process::Command;
 use std::time::Duration;
 
-use serde::Deserialize;
 use thiserror::Error;
 use tracing::debug;
 
 use super::{auth, manifest};
 use crate::meta;
+use crate::types::RegistryCredentials;
 
 /// Docker registry response header containing the image digest.
 pub const CONTENT_DIGEST_HEADER: &str = "Docker-Content-Digest";
@@ -106,9 +106,7 @@ pub fn get_digest(url: &str, token: &str) -> Result<String> {
         }
     };
 
-    Ok(
-        digest_from_response(&response.status_line, response.headers)?
-    )
+    digest_from_response(&response.status_line, response.headers)
 }
 
 fn compare_digest_impl<D, F>(
@@ -416,13 +414,6 @@ fn encode_base64_standard(input: &[u8]) -> String {
     output
 }
 
-#[derive(Debug, Deserialize)]
-struct RegistryCredentials {
-    #[serde(default)]
-    username: String,
-    #[serde(default)]
-    password: String,
-}
 
 #[derive(Debug)]
 struct ParsedUrl {

@@ -41,7 +41,7 @@ pub fn env_string(key: &str) -> String {
 pub fn env_string_slice(key: &str) -> Vec<String> {
     match env::var(key) {
         Ok(value) => value
-            .split(|ch: char| matches!(ch, ',' | ' '))
+            .split([',', ' '])
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(ToOwned::to_owned)

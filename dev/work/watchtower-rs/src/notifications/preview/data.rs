@@ -141,7 +141,7 @@ impl PreviewData {
 
     fn generate_id(&mut self) -> String {
         let mut buf = [0u8; 32];
-        let _ = self.rng.fill_bytes(&mut buf);
+        self.rng.fill_bytes(&mut buf);
         hex_encode(&buf)
     }
 

@@ -5,11 +5,11 @@ use std::error::Error;
 use std::fmt;
 use std::process::Command;
 
-use serde::Deserialize;
 use tracing::debug;
 use url::Url;
 
 use crate::registry::helpers;
+use crate::types::TokenResponse;
 
 /// HTTP header containing registry challenge instructions.
 pub const CHALLENGE_HEADER: &str = "WWW-Authenticate";
@@ -21,13 +21,6 @@ pub struct ChallengeRequest {
     pub accept: String,
     pub user_agent: String,
     pub authorization: Option<String>,
-}
-
-/// Token payload returned by registry auth endpoints.
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-pub struct TokenResponse {
-    #[serde(default)]
-    pub token: String,
 }
 
 /// Authentication failures raised by the registry helper surface.
@@ -203,8 +196,8 @@ pub fn get_challenge_url(image_ref: &str) -> Result<Url, AuthError> {
     let host = helpers::get_registry_address(image_ref)
         .map_err(|err| AuthError::InvalidImageReference(err.to_string()))?;
 
-    Ok(Url::parse(&format!("https://{host}/v2/"))
-        .map_err(|err| AuthError::InvalidImageReference(err.to_string()))?)
+    Url::parse(&format!("https://{host}/v2/"))
+        .map_err(|err| AuthError::InvalidImageReference(err.to_string()))
 }
 
 fn build_basic_authorization_header(registry_auth: &str) -> Result<String, AuthError> {

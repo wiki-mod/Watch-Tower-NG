@@ -1,0 +1,13 @@
+Watch-Tower-NG
+Copyright 2026 wiki-mod/Watch-Tower-NG contributors
+
+This product is a Rust rewrite of Watchtower, the Docker container
+auto-update tool originally developed by the Watchtower contributors.
+
+Original Go implementation:
+  https://github.com/containrrr/watchtower
+  Copyright 2015 Watchtower contributors
+  Licensed under the Apache License, Version 2.0
+
+This derivative work is licensed under the same Apache License, Version 2.0.
+See LICENSE for the full license text.

@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500" width="450" height="450">
+  <!-- Watch-Tower-NG logo — lighthouse in teal circle -->
+  <!-- Colors: bg #3a5f72, structure #1b3c50, beams #b8cdd6, white trim -->
+
+  <!-- Background circle -->
+  <circle cx="250" cy="250" r="238" fill="#3a5f72" stroke="#2c4d5e" stroke-width="7"/>
+
+  <!-- Light beams (left and right, behind tower) -->
+  <polygon points="232,222 20,308 20,368 232,262" fill="#b8cdd6" opacity="0.42"/>
+  <polygon points="268,222 480,308 480,368 268,262" fill="#b8cdd6" opacity="0.42"/>
+
+  <!-- Tower base — trapezoidal, wider at bottom -->
+  <polygon points="188,432 312,432 296,358 204,358" fill="#1b3c50"/>
+  <!-- White horizontal band on lower tower -->
+  <polygon points="188,432 312,432 309,410 191,410" fill="#f0f0f0"/>
+  <!-- Dark band above white band -->
+  <polygon points="192,409 308,409 305,388 195,388" fill="#1b3c50"/>
+
+  <!-- Upper tower shaft -->
+  <rect x="212" y="292" width="76" height="68" fill="#1b3c50"/>
+
+  <!-- Platform ledge (wider than shaft) -->
+  <rect x="174" y="278" width="152" height="17" fill="#1b3c50" rx="2"/>
+
+  <!-- Light room frame (outer border, white) -->
+  <rect x="182" y="208" width="136" height="74" rx="2" fill="none" stroke="#f0f0f0" stroke-width="5"/>
+
+  <!-- Light room fill (dark interior) -->
+  <rect x="184" y="210" width="132" height="70" fill="#1b3c50"/>
+
+  <!-- Light room vertical pane dividers -->
+  <line x1="227" y1="210" x2="227" y2="280" stroke="#f0f0f0" stroke-width="4"/>
+  <line x1="250" y1="210" x2="250" y2="280" stroke="#f0f0f0" stroke-width="4"/>
+  <line x1="273" y1="210" x2="273" y2="280" stroke="#f0f0f0" stroke-width="4"/>
+
+  <!-- Inner glass — subtle lighter fill to suggest illumination -->
+  <rect x="185" y="211" width="130" height="68" fill="#2e5b74" opacity="0.7"/>
+
+  <!-- Roof / peaked cap -->
+  <polygon points="168,214 250,152 332,214" fill="#1b3c50"/>
+
+  <!-- Roof ridge cap (small rect at peak) -->
+  <rect x="244" y="150" width="12" height="10" fill="#1b3c50"/>
+</svg>

@@ -22,11 +22,15 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
 
-      - name: Install Rust
+      - name: Leak scan
+        run: bash .githooks/scan.sh
+
+      - name: Install Rust (stable)
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
           components: rustfmt, clippy
 
       - name: Cache Rust build artifacts
@@ -39,6 +43,10 @@ jobs:
         working-directory: dev/work/watchtower-rs
         run: cargo fmt --all --check
 
+      - name: Clippy (warnings = errors)
+        working-directory: dev/work/watchtower-rs
+        run: cargo clippy --locked -- -D warnings
+
       - name: Build
         working-directory: dev/work/watchtower-rs
         run: cargo build --locked
@@ -46,3 +54,32 @@ jobs:
       - name: Test
         working-directory: dev/work/watchtower-rs
         run: cargo test --locked
+
+      - name: Security audit
+        working-directory: dev/work/watchtower-rs
+        run: |
+          cargo install cargo-audit --locked --quiet
+          cargo audit
+
+  msrv:
+    name: MSRV (Rust 1.85)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install Rust 1.85
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.85"
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: dev/work/watchtower-rs
+          cache-on-failure: true
+
+      - name: Check (MSRV)
+        working-directory: dev/work/watchtower-rs
+        run: cargo check --locked

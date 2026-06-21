@@ -16,7 +16,7 @@ services:
       - "com.centurylinklabs.watchtower.enable=true"
 
   watchtower:
-    image: marrrrrrrrry/watchtower
+    image: wiki-mod/watch-tower-ng
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     command: --debug --http-api-update

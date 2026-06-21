@@ -4,8 +4,8 @@
 
 FROM rust:1.85-alpine AS builder
 
-# use version (for example "v0.3.3") or "dev-rust-port"
-ARG WATCHTOWER_VERSION=dev-rust-port
+# use version (for example "v0.3.3") or "main"
+ARG WATCHTOWER_VERSION=main
 ARG RUN_TESTS=true
 
 # install build tools and certificates to keep the static build and TLS available
@@ -21,7 +21,7 @@ RUN git clone --branch "${WATCHTOWER_VERSION}" https://github.com/wiki-mod/Watch
 
 WORKDIR /watchtower/dev/work/watchtower-rs
 
-RUN cargo build --locked --release && \
+RUN WATCHTOWER_VERSION=${WATCHTOWER_VERSION} cargo build --locked --release && \
     if [ "${RUN_TESTS}" = "true" ]; then cargo test --locked -v; fi
 
 

@@ -1,0 +1,134 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  WORKSPACE: dev/work/watchtower-rs
+
+jobs:
+  build-binaries:
+    name: Binary (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            label: linux-amd64
+            archive: watchtower-ng_linux_amd64.tar.gz
+            use_cross: true
+          - target: i686-unknown-linux-musl
+            os: ubuntu-latest
+            label: linux-i386
+            archive: watchtower-ng_linux_i386.tar.gz
+            use_cross: true
+          - target: armv7-unknown-linux-musleabihf
+            os: ubuntu-latest
+            label: linux-armhf
+            archive: watchtower-ng_linux_armhf.tar.gz
+            use_cross: true
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+            label: linux-arm64v8
+            archive: watchtower-ng_linux_arm64v8.tar.gz
+            use_cross: true
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            label: windows-amd64
+            archive: watchtower-ng_windows_amd64.zip
+            use_cross: false
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross
+        if: matrix.use_cross
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ env.WORKSPACE }}
+          key: release-${{ matrix.target }}
+          cache-on-failure: false
+
+      - name: Build (cross)
+        if: matrix.use_cross
+        working-directory: ${{ env.WORKSPACE }}
+        run: cross build --locked --release --target ${{ matrix.target }} --bin watchtower-rs
+        env:
+          WATCHTOWER_VERSION: ${{ github.ref_name }}
+
+      - name: Build (cargo)
+        if: '!matrix.use_cross'
+        working-directory: ${{ env.WORKSPACE }}
+        run: cargo build --locked --release --target ${{ matrix.target }} --bin watchtower-rs
+        env:
+          WATCHTOWER_VERSION: ${{ github.ref_name }}
+
+      - name: Package (tar.gz)
+        if: runner.os == 'Linux'
+        working-directory: ${{ env.WORKSPACE }}
+        run: |
+          tar -czf "${{ matrix.archive }}" \
+            -C target/${{ matrix.target }}/release watchtower-rs \
+            LICENSE.md
+
+      - name: Package (zip)
+        if: runner.os == 'Windows'
+        working-directory: ${{ env.WORKSPACE }}
+        shell: pwsh
+        run: |
+          $binary = "target\${{ matrix.target }}\release\watchtower-rs.exe"
+          Compress-Archive -Path $binary, "LICENSE.md" -DestinationPath "${{ matrix.archive }}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.label }}
+          path: ${{ env.WORKSPACE }}/${{ matrix.archive }}
+          retention-days: 1
+
+  release:
+    name: GitHub Release
+    needs: build-binaries
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: binary-*
+          merge-multiple: true
+          path: artifacts/
+
+      - name: Create checksums
+        working-directory: artifacts
+        run: sha256sum * > SHA256SUMS
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-alpha') || contains(github.ref_name, '-beta') }}
+          generate_release_notes: true
+          files: artifacts/*

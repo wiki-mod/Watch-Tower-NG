@@ -31,7 +31,7 @@ pub async fn run(args: Vec<String>) -> Result<()> {
 
 async fn run_notify_upgrade(args: Vec<String>) -> Result<()> {
     let cli = WatchtowerCli::try_parse_from(
-        std::iter::once("watchtower".to_string()).chain(args.into_iter()),
+        std::iter::once("watchtower".to_string()).chain(args),
     )?;
 
     let urls = build_notification_urls(&cli.notifications)?;

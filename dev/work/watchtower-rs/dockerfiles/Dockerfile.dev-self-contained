@@ -13,8 +13,6 @@ ARG RUN_TESTS=true
 WORKDIR /watchtower
 COPY Cargo.toml .
 COPY Cargo.lock .
-COPY src/lib.rs ./src/
-COPY src/main.rs ./src/
 RUN cargo fetch --locked
 
 # Install build tooling and certificates so TLS and time zone data remain available.
@@ -29,8 +27,7 @@ COPY . /watchtower
 RUN \
   cd /watchtower && \
   \
-  # Build the release binary and run tests
-  cargo build --locked --release && \
+  WATCHTOWER_VERSION=${WATCHTOWER_VERSION} cargo build --locked --release && \
   if [ "${RUN_TESTS}" = "true" ]; then cargo test --locked; fi
 
 

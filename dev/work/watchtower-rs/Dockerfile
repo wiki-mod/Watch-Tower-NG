@@ -1,4 +1,9 @@
-FROM rust:1.85-bookworm AS builder
+FROM --platform=$TARGETPLATFORM rust:1.85-alpine AS builder
+
+ARG WATCHTOWER_VERSION=dev
+ENV WATCHTOWER_VERSION=${WATCHTOWER_VERSION}
+
+RUN apk add --no-cache musl-dev
 
 WORKDIR /app
 
@@ -7,20 +12,26 @@ COPY src ./src
 
 RUN cargo build --locked --release
 
-FROM debian:bookworm-slim AS runtime
+FROM alpine:latest AS certs
 
-LABEL org.opencontainers.image.title="Watchtower NG"
-LABEL org.opencontainers.image.description="Rust rewrite of Watchtower"
-LABEL org.opencontainers.image.source="https://github.com/wiki-mod/Watch-Tower-NG"
-LABEL org.opencontainers.image.licenses="MIT"
+RUN apk add --no-cache \
+    ca-certificates \
+    tzdata
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates tzdata \
-    && rm -rf /var/lib/apt/lists/*
+FROM scratch
 
-COPY --from=builder /app/target/release/watchtower-rs /watchtower
+LABEL "com.centurylinklabs.watchtower"="true"
+
+COPY --from=certs \
+    /etc/ssl/certs/ca-certificates.crt \
+    /etc/ssl/certs/ca-certificates.crt
+COPY --from=certs \
+    /usr/share/zoneinfo \
+    /usr/share/zoneinfo
 
 EXPOSE 8080
+
+COPY --from=builder /app/target/release/watchtower-rs /watchtower
 
 HEALTHCHECK CMD ["/watchtower", "--health-check"]
 

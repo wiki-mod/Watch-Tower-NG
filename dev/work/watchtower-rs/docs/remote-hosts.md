@@ -3,7 +3,7 @@ By default, watchtower is set-up to monitor the local Docker daemon (the same da
 ```bash
 docker run -d \
   --name watchtower \
-  marrrrrrrrry/watchtower --host "tcp://10.0.1.2:2375"
+  wiki-mod/watch-tower-ng --host "tcp://10.0.1.2:2375"
 ```
 
 or
@@ -12,7 +12,7 @@ or
 docker run -d \
   --name watchtower \
   -e DOCKER_HOST="tcp://10.0.1.2:2375" \
-  marrrrrrrrry/watchtower
+  wiki-mod/watch-tower-ng
 ```
 
 Note in both of the examples above that it is unnecessary to mount the _/var/run/docker.sock_ into the watchtower container.

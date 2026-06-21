@@ -1,27 +1,35 @@
 # Execution Status
 
-Current state:
-- Repository root: `/opt/codex/watchtower-ng`
-- Active legacy source: `old-source/`
-- Legacy source status: read-only
-- Migration workspace: not started yet
-- Release workspace: not started yet
-- Index-SoT is present and parseable.
-- Current open migration backlog: 61 `Nicht begonnen` entries, plus separate blocked and in-progress entries.
+Environment:
+- Repository root: `C:\aunetic\ide\Watch-Tower-NG` (Windows) / `/c/aunetic/ide/Watch-Tower-NG` (Git Bash)
+- Platform: Windows 11 Pro, Git Bash + PowerShell
+- Active legacy source: `old-source/` (Go, read-only SoT)
+- Migration workspace: `dev/work/watchtower-rs/` (Rust, Cargo workspace)
+- Git remote: `git@github.com:wiki-mod/Watch-Tower-NG.git`
 
-What was verified:
-- `old-source/` contains a Go codebase with Docker, docs, tests, and release tooling.
-- Git remote exists for `origin` at `git@github.com:wiki-mod/Watch-Tower-NG.git` in the new workspace root.
-- Open GitHub issues are disabled in the legacy repository.
-- No open PRs were found at the time of the init pass.
+Trust status (as of 2026-06-21):
+- All existing Rust files: **UNTRUSTED** (Codex-generated, not re-verified by Claude Code)
+- `04_INDEX_TOS.md`: **UNTRUSTED** (Codex contradictions confirmed — e.g. IDX-0030 duplicate blocks, IDX-0023/IDX-0026 wrong target paths)
+- Re-verification by Claude Code is required for every file before Quality A can be claimed.
+- See `03_INCIDENTS_RCA.md` INC-001 for the full incident record.
 
-Observed legacy cleanup spots:
-- `cmd/root.go` contains a TODO for making the listen port configurable.
-- `internal/flags/flags.go` contains a FIXME around the `snakeswap` hack.
-- Several cleanup-related code paths exist around container/image cleanup and multiple-instance checks.
+Known build state:
+- Several runtime phases return `RuntimeAdapterMissing` because `bollard` (Rust Docker SDK) is not yet in `Cargo.toml`.
+- `src/cli.rs` has dead-code warnings that block downstream modules — prioritize early.
+- `src/notify_upgrade.rs` had module wiring errors — verify current state before porting.
 
-Immediate next steps:
-- Keep the open lanes as the active beauftragungs backlog.
-- Separate target-unclear lanes from directly assignable lanes before new agent fanout.
-- Keep blocked lanes isolated until their blocker class is resolved.
-- Record migration decisions and parity gaps in `dev/gov/`.
+Legacy cleanup spots (carry into Rust port):
+- `cmd/root.go`: TODO for configurable listen port.
+- `internal/flags/flags.go`: FIXME for the `snakeswap` integration hack.
+- Cleanup behavior is implemented in multiple places and must be rechecked for parity and safety.
+
+Migration index:
+- 153 files inventoried in `04_INDEX_TOS.md`.
+- Trust field `Claude-Verifiziert-Hash` must be empty until Claude Code re-verifies each file.
+- Priority order: source translations first, byte-identical assets (images, icons, docs) second.
+
+Next steps:
+- Complete foundation: CLAUDE.md + GOV rewrite + INDEX trust policy.
+- Architectural decision: add `bollard` to `Cargo.toml` (Docker client, required for functional parity).
+- Fix `src/cli.rs` dead-code warnings (blocks many downstream modules).
+- Begin systematic re-verification per file (consult INDEX for order).

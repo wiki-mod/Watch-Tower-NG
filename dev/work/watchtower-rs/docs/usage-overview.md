@@ -1,4 +1,4 @@
-Watchtower is itself packaged as a Docker container so installation is as simple as pulling the `marrrrrrrrry/watchtower` image. If you are using ARM based architecture, pull the appropriate `marrrrrrrrry/watchtower:armhf-<tag>` image from the [marrrrrrrrry Docker Hub](https://hub.docker.com/r/marrrrrrrrry/watchtower/tags/).
+Watch-Tower-NG is itself packaged as a Docker container so installation is as simple as pulling the `ghcr.io/wiki-mod/watchtower-ng` image. The image is built for multiple architectures (amd64, arm64, armhf) — Docker will automatically select the right variant for your platform.
 
 Since the watchtower code needs to interact with the Docker API in order to monitor the running containers, you need to mount _/var/run/docker.sock_ into the container with the `-v` flag when you run it.
 
@@ -8,7 +8,7 @@ Run the `watchtower` container with the following command:
 docker run -d \
   --name watchtower \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  marrrrrrrrry/watchtower
+  ghcr.io/wiki-mod/watchtower-ng
 ```
 
 If pulling images from private Docker registries, supply registry authentication credentials with the environment variables `REPO_USER` and `REPO_PASS`
@@ -22,7 +22,7 @@ docker run -d \
   -e REPO_USER=username \
   -e REPO_PASS=password \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  marrrrrrrrry/watchtower container_to_watch --debug
+  ghcr.io/wiki-mod/watchtower-ng container_to_watch --debug
 ```
 
 Also check out [this Stack Overflow answer](https://stackoverflow.com/a/30494145/7872793) for more options on how to pass environment variables.
@@ -34,7 +34,7 @@ docker run -d \
   --name watchtower \
   -v $HOME/.docker/config.json:/config.json \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  marrrrrrrrry/watchtower container_to_watch --debug
+  ghcr.io/wiki-mod/watchtower-ng container_to_watch --debug
 ```
 
 !!! note "Changes to config.json while running"
@@ -52,7 +52,6 @@ from a private repo on the GitHub Registry and monitors it with watchtower. Note
 to 30s rather than the default 24 hours.
 
 ```yaml
-version: "3"
 services:
   cavo:
     image: ghcr.io/<org>/<image>:<tag>
@@ -60,7 +59,7 @@ services:
       - "443:3443"
       - "80:3080"
   watchtower:
-    image: marrrrrrrrry/watchtower
+    image: ghcr.io/wiki-mod/watchtower-ng
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /root/.docker/config.json:/config.json
