@@ -106,23 +106,16 @@ Open work items:
 
 ---
 
-## INC-002 — Metrics API als „Experimental" markiert (offen, 2026-06-21)
+## INC-002 — Metrics API als „Experimental" markiert
 
-**Problem**: In `docs/metrics.md` steht `!!! warning "Experimental feature"` mit dem Hinweis, dass das Feature seit v1.0.4 experimental ist und Verhaltensauffälligkeiten gemeldet werden sollen.
-
-**Symptom**: Die Docs-Warnung ist in der Rust-Port-Doku übernommen worden (IDX-0021, `pkg/metrics/` → `src/metrics.rs`). Unklar ob dieser Status im Rust-Port noch gilt oder ob das Feature zwischenzeitlich stable wurde.
-
-**Root cause**: Unbekannt — muss im Go-Quellcode geprüft werden:
-- `old-source/pkg/metrics/` und `old-source/pkg/api/metrics/` lesen
-- Prüfen ob die Experimental-Warnung im Go-Code selbst verankert ist oder nur in der Doku
-- Prüfen ob es offene Issues/PRs gab die diesen Status ändern sollten
-
-**Fix**: Nach Code-Analyse:
-- Falls Experimental-Status berechtigt → im Rust-Port beibehalten, ggf. Bedingungen klären unter denen es stable wird
-- Falls Experimental-Status überholt → `!!! warning`-Block aus `docs/metrics.md` entfernen
-
-**Prevention**: Vor Übernahme von Experimental-Warnungen in Rust-Port-Doku: immer Go-Quelle prüfen ob der Status noch aktuell ist.
-
-**Verification**: Go-Quellcode `old-source/pkg/metrics/` und `old-source/pkg/api/metrics/` gelesen, Status geklärt, Docs entsprechend aktualisiert.
+→ Tracking in GitHub: https://github.com/wiki-mod/Watch-Tower-NG/issues/1
 
 **Status**: Offen — prüfen bei IDX-Verifikation von `pkg/metrics/` und `pkg/api/metrics/`.
+
+---
+
+## INC-004 — SafeImageID-Semantik fehlt in ContainerLike
+
+→ Tracking in GitHub: https://github.com/wiki-mod/Watch-Tower-NG/issues/2
+
+**Status**: Offen — Big-Picture-Review mit großem Modell erforderlich bevor Fix.
