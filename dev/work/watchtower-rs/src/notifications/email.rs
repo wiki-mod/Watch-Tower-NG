@@ -55,6 +55,7 @@ impl EmailTypeNotifier {
     /// * `port` - SMTP port (default: 25)
     /// * `tls_skip_verify` - Whether to skip TLS verification
     /// * `delay` - Delay before sending notification
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         from: impl Into<String>,
         to: impl Into<String>,

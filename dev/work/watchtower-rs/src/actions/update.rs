@@ -79,48 +79,48 @@ where
     C: UpdateClient,
     C::Error: std::fmt::Display,
 {
-    for i in 0..containers.len() {
-        let stale_result = client.is_container_stale(&containers[i], params);
+    for container in &mut containers {
+        let stale_result = client.is_container_stale(container, params);
 
         let (stale, newest_image) = match stale_result {
             Ok((stale, newest_image)) => (stale, newest_image),
             Err(err) => {
                 info!(
                     "Unable to update container {:?}: {}. Proceeding to next.",
-                    containers[i].name(),
+                    container.name(),
                     err
                 );
-                progress.add_skipped(&containers[i], err.to_string());
-                containers[i].set_stale(false);
+                progress.add_skipped(container, err.to_string());
+                container.set_stale(false);
                 continue;
             }
         };
 
-        let should_update = stale && !params.no_restart && !containers[i].is_monitor_only(params);
+        let should_update = stale && !params.no_restart && !container.is_monitor_only(params);
 
         if should_update {
-            if let Err(config_err) = containers[i].verify_configuration() {
+            if let Err(config_err) = container.verify_configuration() {
                 if tracing::enabled!(tracing::Level::TRACE) {
-                    if let Some(image_info) = containers[i].image_info() {
+                    if let Some(image_info) = container.image_info() {
                         trace!("Image info: {:?}", image_info);
                         trace!("Image config: {:?}", image_info.config);
                     }
-                    trace!("Container info: {:?}", containers[i].container_info());
+                    trace!("Container info: {:?}", container.container_info());
                 }
 
                 info!(
                     "Unable to update container {:?}: {}. Proceeding to next.",
-                    containers[i].name(),
+                    container.name(),
                     config_err
                 );
-                progress.add_skipped(&containers[i], config_err.to_string());
-                containers[i].set_stale(false);
+                progress.add_skipped(container, config_err.to_string());
+                container.set_stale(false);
                 continue;
             }
         }
 
-        progress.add_scanned(&containers[i], newest_image);
-        containers[i].set_stale(stale);
+        progress.add_scanned(container, newest_image);
+        container.set_stale(stale);
     }
 
     Ok(containers)
@@ -348,11 +348,11 @@ where
     C: UpdateClient,
     C::Error: std::fmt::Display,
 {
-    if container.is_watchtower() {
-        if client.rename_container(container, &rand_name()).is_err() {
-            error!("rename container failed");
-            return Ok(());
-        }
+    if container.is_watchtower()
+        && client.rename_container(container, &rand_name()).is_err()
+    {
+        error!("rename container failed");
+        return Ok(());
     }
 
     if !params.no_restart {

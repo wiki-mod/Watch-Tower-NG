@@ -7,9 +7,9 @@ pub mod digest;
 pub mod helpers;
 pub mod manifest;
 pub mod pull;
-mod registry;
+mod core;
 pub mod trust;
 
-// Re-export public API from registry module
-pub use registry::{default_auth_handler, get_pull_options, warn_on_api_consumption};
-pub use registry::{AuthHandler, PullOptions};
+// Re-export public API from core module
+pub use core::{default_auth_handler, get_pull_options, warn_on_api_consumption};
+pub use core::{AuthHandler, PullOptions};
