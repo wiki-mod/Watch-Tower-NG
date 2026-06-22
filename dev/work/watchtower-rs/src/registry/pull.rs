@@ -8,7 +8,6 @@
 
 use crate::types::FilterableContainer;
 
-use super::credentials;
 use super::digest::DigestError;
 use super::trust;
 
@@ -45,8 +44,8 @@ pub enum PullDecision {
 ///
 /// The legacy behavior prefers environment credentials and falls back to the
 /// Docker config file. A resolved auth payload enables the retry handler.
-pub fn get_pull_options(image_name: &str) -> credentials::Result<PullOptions> {
-    let registry_auth = credentials::encoded_auth(image_name)?;
+pub fn get_pull_options(image_name: &str) -> trust::Result<PullOptions> {
+    let registry_auth = trust::encoded_auth(image_name)?;
 
     if registry_auth.is_empty() {
         return Ok(PullOptions::default());
@@ -209,22 +208,22 @@ mod tests {
     #[test]
     fn get_pull_options_propagates_credentials_errors() {
         let err = get_pull_options_with_resolver("registry.example.com/team/image:latest", || {
-            Err(credentials::CredentialsError::MissingEnvironmentCredentials)
+            Err(trust::TrustError::MissingEnvironmentCredentials)
         })
         .expect_err("missing credentials should fail");
 
         assert!(matches!(
             err,
-            credentials::CredentialsError::MissingEnvironmentCredentials
+            trust::TrustError::MissingEnvironmentCredentials
         ));
     }
 
     fn get_pull_options_with_resolver<F>(
         image_name: &str,
         resolver: F,
-    ) -> credentials::Result<PullOptions>
+    ) -> trust::Result<PullOptions>
     where
-        F: FnOnce() -> credentials::Result<String>,
+        F: FnOnce() -> trust::Result<String>,
     {
         let registry_auth = resolver()?;
 

@@ -1,8 +1,3 @@
-mod cli;
-mod flags;
-
-use anyhow::Result;
-
-fn main() -> Result<()> {
-    cli::execute()
+fn main() -> anyhow::Result<()> {
+    watchtower_rs::cli::execute()
 }

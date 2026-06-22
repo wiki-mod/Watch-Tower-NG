@@ -36,10 +36,8 @@ pub mod rand_sha256;
 pub mod registry;
 pub mod session;
 pub mod sorter;
-pub mod startup;
 pub mod types;
 pub mod util;
-pub mod wait;
 
 /// Shared result type for the library.
 pub type Result<T> = std::result::Result<T, Error>;
@@ -457,7 +455,7 @@ impl WatchtowerApp {
     }
 
     fn emit_startup_phase(&self, plan: &RootExecutionPlan) {
-        crate::startup::emit_startup_messages(&plan.startup_config);
+        crate::cli::emit_startup_messages(&plan.startup_config);
     }
 
     fn run_once_branch(&self, _: &RootExecutionPlan) -> Result<()> {

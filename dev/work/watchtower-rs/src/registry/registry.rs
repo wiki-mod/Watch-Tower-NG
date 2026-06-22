@@ -10,7 +10,6 @@
 
 use crate::types::FilterableContainer;
 
-use super::credentials;
 use super::pull;
 use super::trust;
 
@@ -31,8 +30,8 @@ pub type PullOptions = pull::PullOptions;
 ///
 /// Returns an error if the Docker config file cannot be read or parsed, or if
 /// environment credentials are in an invalid format.
-pub fn get_pull_options(image_name: &str) -> credentials::Result<PullOptions> {
-    let auth = credentials::encoded_auth(image_name)?;
+pub fn get_pull_options(image_name: &str) -> trust::Result<PullOptions> {
+    let auth = trust::encoded_auth(image_name)?;
     tracing::debug!(image = %image_name, "Got image name");
 
     if auth.is_empty() {
