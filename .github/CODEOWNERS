@@ -1,0 +1,7 @@
+# This file specifies the default code owners for the Watch-Tower-NG repository.
+# When module owners are assigned, update these patterns accordingly.
+# Format: pattern  @owner(s)
+# Example: src/cli.rs @wiki-mod/cli-maintainers
+
+# Default ownership - update as project matures
+* @wiki-mod/maintainers

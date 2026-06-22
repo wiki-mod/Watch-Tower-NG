@@ -1,0 +1,7 @@
+---
+engines:
+  coverage:
+    exclude_paths:
+      - "*.md"
+      - "**/*.md"
+      - "old-source/"
