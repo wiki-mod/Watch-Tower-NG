@@ -21,6 +21,7 @@ pub mod api_update;
 pub mod cgroup;
 pub mod cli;
 pub mod container;
+pub mod container_metadata;
 pub mod docker_client;
 pub mod filters;
 pub mod flags;
