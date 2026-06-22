@@ -8,7 +8,7 @@ use crate::types::{ContainerReport, Report};
 pub(super) fn new_report(progress: &Progress) -> Report {
     let mut report = Report::default();
 
-    for status in progress.entries.values().cloned() {
+    for status in progress.0.values().cloned() {
         let state = status.state;
 
         if state == State::Skipped {

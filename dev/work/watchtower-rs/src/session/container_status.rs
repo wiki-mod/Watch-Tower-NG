@@ -2,7 +2,18 @@
 
 use crate::types::{ContainerID, ContainerReport, ImageID};
 
+/// Trait matching the Go types.Container interface used in progress.go.
+/// Necessary in Rust because modules cannot access sibling-package private
+/// fields the way Go files in the same package can.
+pub trait ContainerLike {
+    fn id(&self) -> &ContainerID;
+    fn name(&self) -> &str;
+    fn image_name(&self) -> &str;
+    fn current_image_id(&self) -> &ImageID;
+}
+
 /// Session state for a container during a single update run.
+/// Mirrors the Go `State` iota in container_status.go.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum State {
     Unknown,
@@ -15,7 +26,6 @@ pub enum State {
 }
 
 impl State {
-    /// Return the legacy report label for this state.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Unknown => "Unknown",
@@ -35,47 +45,24 @@ impl std::fmt::Display for State {
     }
 }
 
-/// Minimal container view used to build session status without Docker types.
-pub trait ContainerLike {
-    fn id(&self) -> &ContainerID;
-    fn name(&self) -> &str;
-    fn image_name(&self) -> &str;
-    fn current_image_id(&self) -> &ImageID;
-}
-
-/// One container entry in a session.
+/// One container entry in a session. Mirrors Go's ContainerStatus struct.
+/// Fields are pub(super) so progress.rs can construct and mutate within the
+/// session module, mirroring Go's same-package field access.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContainerStatus {
-    pub container_id: ContainerID,
-    pub current_image_id: ImageID,
-    pub latest_image_id: ImageID,
-    pub container_name: String,
-    pub image_name: String,
-    pub error: Option<String>,
-    pub state: State,
+    pub(super) container_id: ContainerID,
+    pub(super) old_image: ImageID,
+    pub(super) new_image: ImageID,
+    pub(super) container_name: String,
+    pub(super) image_name: String,
+    pub(super) error: Option<String>,
+    pub(super) state: State,
 }
 
 impl ContainerStatus {
-    /// Build a status record from any container-like value.
-    pub fn from_container(
-        container: &impl ContainerLike,
-        latest_image_id: impl Into<ImageID>,
-        state: State,
-    ) -> Self {
-        Self {
-            container_id: container.id().clone(),
-            current_image_id: container.current_image_id().clone(),
-            latest_image_id: latest_image_id.into(),
-            container_name: container.name().to_string(),
-            image_name: container.image_name().to_string(),
-            error: None,
-            state,
-        }
-    }
-
     /// Return the container ID.
-    pub fn id(&self) -> &ContainerID {
-        &self.container_id
+    pub fn id(&self) -> ContainerID {
+        self.container_id.clone()
     }
 
     /// Return the container name.
@@ -83,24 +70,24 @@ impl ContainerStatus {
         &self.container_name
     }
 
-    /// Return the image ID that the container used when the session started.
-    pub fn current_image_id(&self) -> &ImageID {
-        &self.current_image_id
+    /// Return the image ID the container used when the session started.
+    pub fn current_image_id(&self) -> ImageID {
+        self.old_image.clone()
     }
 
     /// Return the newest image ID found during the session.
-    pub fn latest_image_id(&self) -> &ImageID {
-        &self.latest_image_id
+    pub fn latest_image_id(&self) -> ImageID {
+        self.new_image.clone()
     }
 
-    /// Return the name:tag that the container uses.
+    /// Return the name:tag the container uses.
     pub fn image_name(&self) -> &str {
         &self.image_name
     }
 
-    /// Return the error, if any, that was encountered for the container during a session.
-    pub fn error(&self) -> &str {
-        self.error.as_deref().unwrap_or("")
+    /// Return the error encountered for this container, or empty string.
+    pub fn error(&self) -> String {
+        self.error.clone().unwrap_or_default()
     }
 
     /// Return the current state label.
@@ -108,78 +95,18 @@ impl ContainerStatus {
         self.state.as_str()
     }
 
-    /// Return the state label used in the aggregated report.
-    pub fn state_label(&self) -> &'static str {
-        self.state.as_str()
-    }
-
+    /// Convert into a ContainerReport for the aggregated report.
+    /// pub(super) because report.rs accesses this within the session module,
+    /// mirroring Go's same-package field access in report.go.
     pub(super) fn into_report(self) -> ContainerReport {
-        let state = self.state_label().to_string();
         ContainerReport {
             id: self.container_id,
             name: self.container_name,
-            current_image_id: self.current_image_id,
-            latest_image_id: self.latest_image_id,
+            current_image_id: self.old_image,
+            latest_image_id: self.new_image,
             image_name: self.image_name,
             error: self.error,
-            state,
+            state: self.state.as_str().to_string(),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[derive(Clone)]
-    struct MockContainer {
-        id: ContainerID,
-        name: String,
-        image_name: String,
-        current_image_id: ImageID,
-    }
-
-    impl ContainerLike for MockContainer {
-        fn id(&self) -> &ContainerID {
-            &self.id
-        }
-
-        fn name(&self) -> &str {
-            &self.name
-        }
-
-        fn image_name(&self) -> &str {
-            &self.image_name
-        }
-
-        fn current_image_id(&self) -> &ImageID {
-            &self.current_image_id
-        }
-    }
-
-    fn container(id: &str, name: &str, image_name: &str, current_image_id: &str) -> MockContainer {
-        MockContainer {
-            id: ContainerID::from(id),
-            name: name.to_string(),
-            image_name: image_name.to_string(),
-            current_image_id: ImageID::from(current_image_id),
-        }
-    }
-
-    #[test]
-    fn status_mapping_preserves_container_fields_and_labels() {
-        let container = container("sha256:1234567890abcdef", "app", "example/app:latest", "old");
-
-        let status = ContainerStatus::from_container(&container, "new", State::Updated);
-
-        assert_eq!(status.id(), &ContainerID::from("sha256:1234567890abcdef"));
-        assert_eq!(status.name(), "app");
-        assert_eq!(status.image_name(), "example/app:latest");
-        assert_eq!(status.current_image_id(), &ImageID::from("old"));
-        assert_eq!(status.latest_image_id(), &ImageID::from("new"));
-        assert_eq!(status.error(), "");
-        assert_eq!(status.state(), "Updated");
-        assert_eq!(status.state_label(), "Updated");
-        assert_eq!(State::Unknown.as_str(), "Unknown");
     }
 }

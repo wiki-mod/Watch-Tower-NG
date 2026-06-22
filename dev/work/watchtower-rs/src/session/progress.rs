@@ -6,66 +6,79 @@ use super::container_status::{ContainerLike, ContainerStatus, State};
 use crate::types::{ContainerID, ImageID, Report};
 
 /// Session progress indexed by container ID.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Progress {
-    pub(super) entries: HashMap<ContainerID, ContainerStatus>,
+/// Mirrors Go's `type Progress map[types.ContainerID]*ContainerStatus`.
+pub struct Progress(pub(super) HashMap<ContainerID, ContainerStatus>);
+
+impl Default for Progress {
+    fn default() -> Self {
+        Self(HashMap::new())
+    }
+}
+
+/// Build a ContainerStatus from a container-like value and state.
+/// Mirrors Go's `UpdateFromContainer` in progress.go.
+pub(super) fn update_from_container(
+    cont: &impl ContainerLike,
+    new_image: ImageID,
+    state: State,
+) -> ContainerStatus {
+    ContainerStatus {
+        container_id: cont.id().clone(),
+        container_name: cont.name().to_string(),
+        image_name: cont.image_name().to_string(),
+        old_image: cont.current_image_id().clone(),
+        new_image,
+        error: None,
+        state,
+    }
 }
 
 impl Progress {
-    /// Add or replace an entry.
+    /// Add a container to the map using container ID as the key.
+    /// Mirrors Go's `Progress.Add`.
     pub fn add(&mut self, update: ContainerStatus) {
-        self.entries.insert(update.container_id.clone(), update);
-    }
-
-    /// Add a scanned container to the session.
-    pub fn add_scanned(
-        &mut self,
-        container: &impl ContainerLike,
-        latest_image_id: impl Into<ImageID>,
-    ) {
-        self.add(ContainerStatus::from_container(
-            container,
-            latest_image_id,
-            State::Scanned,
-        ));
+        self.0.insert(update.container_id.clone(), update);
     }
 
     /// Add a skipped container to the session.
-    pub fn add_skipped(&mut self, container: &impl ContainerLike, err: impl ToString) {
-        let mut update = ContainerStatus::from_container(
-            container,
-            container.current_image_id().clone(),
-            State::Skipped,
-        );
+    /// Mirrors Go's `Progress.AddSkipped`.
+    pub fn add_skipped(&mut self, cont: &impl ContainerLike, err: impl ToString) {
+        let safe_image = cont.current_image_id().clone();
+        let mut update = update_from_container(cont, safe_image, State::Skipped);
         update.error = Some(err.to_string());
         self.add(update);
     }
 
-    /// Mark a previously scanned container as selected for update.
-    pub fn mark_for_update(&mut self, container_id: &ContainerID) {
-        self.entries
-            .get_mut(container_id)
-            .expect("container must exist before mark_for_update")
-            .state = State::Updated;
+    /// Add a scanned container to the session.
+    /// Mirrors Go's `Progress.AddScanned`.
+    pub fn add_scanned(&mut self, cont: &impl ContainerLike, new_image: impl Into<ImageID>) {
+        self.add(update_from_container(cont, new_image.into(), State::Scanned));
     }
 
-
     /// Mark containers as failed.
+    /// Mirrors Go's `Progress.UpdateFailed`.
     pub fn update_failed<E>(&mut self, failures: impl IntoIterator<Item = (ContainerID, E)>)
     where
         E: ToString,
     {
-        for (container_id, err) in failures {
-            let entry = self
-                .entries
-                .get_mut(&container_id)
-                .expect("container must exist before update_failed");
-            entry.state = State::Failed;
-            entry.error = Some(err.to_string());
+        for (id, err) in failures {
+            if let Some(entry) = self.0.get_mut(&id) {
+                entry.error = Some(err.to_string());
+                entry.state = State::Failed;
+            }
         }
     }
 
-    /// Convert the session progress into the crate's aggregated report shape.
+    /// Mark a previously scanned container as selected for update.
+    /// Mirrors Go's `Progress.MarkForUpdate`.
+    pub fn mark_for_update(&mut self, container_id: &ContainerID) {
+        if let Some(entry) = self.0.get_mut(container_id) {
+            entry.state = State::Updated;
+        }
+    }
+
+    /// Create a Report from this Progress instance.
+    /// Mirrors Go's `Progress.Report`.
     pub fn report(&self) -> Report {
         super::report::new_report(self)
     }
@@ -79,7 +92,6 @@ impl From<Progress> for Report {
 
 #[cfg(test)]
 mod tests {
-    use super::super::container_status::ContainerLike;
     use super::*;
     use crate::types::ContainerID;
 
@@ -95,15 +107,12 @@ mod tests {
         fn id(&self) -> &ContainerID {
             &self.id
         }
-
         fn name(&self) -> &str {
             &self.name
         }
-
         fn image_name(&self) -> &str {
             &self.image_name
         }
-
         fn current_image_id(&self) -> &ImageID {
             &self.current_image_id
         }
@@ -119,7 +128,7 @@ mod tests {
     }
 
     #[test]
-    fn skipped_and_scanned_entries_classify_like_the_legacy_session() {
+    fn skipped_and_scanned_entries_classify_correctly() {
         let scanned = container("b", "scanned", "image:scanned", "old");
         let skipped = container("a", "skipped", "image:skipped", "same");
 
@@ -138,12 +147,12 @@ mod tests {
 
     #[test]
     fn update_failure_marks_entry_failed() {
-        let container = container("c", "updating", "image:update", "old");
+        let cont = container("c", "updating", "image:update", "old");
         let mut progress = Progress::default();
 
-        progress.add_scanned(&container, "new");
-        progress.mark_for_update(container.id());
-        progress.update_failed([(container.id().clone(), "pull failed")]);
+        progress.add_scanned(&cont, "new");
+        progress.mark_for_update(cont.id());
+        progress.update_failed([(cont.id().clone(), "pull failed")]);
 
         let report = progress.report();
 
