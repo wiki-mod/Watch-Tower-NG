@@ -7,13 +7,8 @@ use crate::types::{ContainerID, ImageID, Report};
 
 /// Session progress indexed by container ID.
 /// Mirrors Go's `type Progress map[types.ContainerID]*ContainerStatus`.
+#[derive(Default)]
 pub struct Progress(pub(super) HashMap<ContainerID, ContainerStatus>);
-
-impl Default for Progress {
-    fn default() -> Self {
-        Self(HashMap::new())
-    }
-}
 
 /// Build a ContainerStatus from a container-like value and state.
 /// Mirrors Go's `UpdateFromContainer` in progress.go.

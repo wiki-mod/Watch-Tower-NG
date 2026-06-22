@@ -96,7 +96,7 @@ impl GotifyTypeNotifier {
 /// Build a legacy Gotify notification URL for Shoutrrr.
 pub fn build_gotify_url(settings: &GotifySettings<'_>) -> Result<String, String> {
     let parsed = Url::parse(settings.api_url)
-        .map_err(|err| format!("Invalid URL: {}", err.to_string()))?;
+        .map_err(|err| format!("Invalid URL: {err}"))?;
 
     match parsed.scheme() {
         "http" | "https" => {}

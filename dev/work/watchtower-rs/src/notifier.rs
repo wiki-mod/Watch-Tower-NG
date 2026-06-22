@@ -253,8 +253,10 @@ pub fn append_legacy_urls(
                 urls.push(build_teams_url(&teams_settings(input))?);
             }
             GOTIFY_TYPE => {
-                urls.push(build_gotify_url(&gotify_settings(input))
-                    .map_err(|s| NotificationUrlError::InvalidUrl(s))?);
+                urls.push(
+                    build_gotify_url(&gotify_settings(input))
+                        .map_err(NotificationUrlError::InvalidUrl)?,
+                );
             }
             other => return Err(NotifierError::UnknownNotificationType(other.to_string())),
         }
