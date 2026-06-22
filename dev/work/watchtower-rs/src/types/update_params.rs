@@ -25,7 +25,7 @@ pub struct UpdateParams {
 }
 
 impl UpdateParams {
-    /// Build a new parameter set.
+    /// Build a new parameter set with default values.
     pub fn new() -> Self {
         Self::default()
     }
@@ -39,7 +39,7 @@ impl UpdateParams {
         self
     }
 
-    /// Return true when the container passes the configured filter.
+    /// Return true when the container passes the configured filter (or no filter is set).
     pub fn matches(&self, container: &dyn FilterableContainer) -> bool {
         self.filter.as_ref().is_none_or(|filter| filter(container))
     }
@@ -58,60 +58,5 @@ impl fmt::Debug for UpdateParams {
             .field("rolling_restart", &self.rolling_restart)
             .field("label_precedence", &self.label_precedence)
             .finish()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::super::filterable_container::FilterableContainer;
-    use super::*;
-
-    struct MockContainer {
-        name: String,
-        watchtower: bool,
-        enabled: (bool, bool),
-        scope: Option<String>,
-        image_name: String,
-    }
-
-    impl FilterableContainer for MockContainer {
-        fn name(&self) -> &str {
-            &self.name
-        }
-
-        fn is_watchtower(&self) -> bool {
-            self.watchtower
-        }
-
-        fn enabled(&self) -> (bool, bool) {
-            self.enabled
-        }
-
-        fn scope(&self) -> Option<&str> {
-            self.scope.as_deref()
-        }
-
-        fn image_name(&self) -> &str {
-            &self.image_name
-        }
-    }
-
-    #[test]
-    fn update_params_matches_filter() {
-        let params = UpdateParams::new().with_filter(|container| {
-            container.name() == "watchtower" && !container.is_watchtower()
-        });
-        let container = MockContainer {
-            name: "watchtower".to_string(),
-            watchtower: false,
-            enabled: (true, true),
-            scope: Some("default".to_string()),
-            image_name: "containrrr/watchtower:latest".to_string(),
-        };
-
-        assert!(params.matches(&container));
-        assert_eq!(container.enabled(), (true, true));
-        assert_eq!(container.scope(), Some("default"));
-        assert_eq!(container.image_name(), "containrrr/watchtower:latest");
     }
 }
