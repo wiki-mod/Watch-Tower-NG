@@ -212,8 +212,8 @@ fn render_env_content(urls: &[String]) -> String {
 fn log_copy_hint(env_file: &Path) {
     // Mirror the old copy hint so the operator can retrieve the temp env file.
     let container_id = match cgroup::get_running_container_id() {
-        Some(id) => id.short_id(),
-        None => "<CONTAINER>".to_string(),
+        Ok(Some(id)) => id.short_id(),
+        Ok(None) | Err(_) => "<CONTAINER>".to_string(),
     };
 
     logf("To get the environment file, use:");

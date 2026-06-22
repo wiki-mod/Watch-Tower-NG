@@ -4,13 +4,11 @@
 //!
 //! Translated from `old-source/pkg/types/registry_credentials.go`.
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 /// Credentials for registry authentication.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct RegistryCredentials {
-    #[serde(default)]
     pub username: String,
-    #[serde(default)]
     pub password: String,
 }
