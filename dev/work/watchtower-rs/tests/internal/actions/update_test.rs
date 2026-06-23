@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
+mod mocks;
+
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 
