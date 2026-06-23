@@ -25,7 +25,7 @@ fn should_serve_metrics() {
         &[("watchtower_containers_updated", "0")],
     );
 
-    metrics::RegisterScan(Some(Metric {
+    metrics::RegisterScan(Some(&Metric {
         scanned: 4,
         updated: 3,
         failed: 1,

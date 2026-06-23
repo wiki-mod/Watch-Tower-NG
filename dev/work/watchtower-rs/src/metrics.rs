@@ -89,6 +89,12 @@ impl Metrics {
         self.channel.enqueue(Some(*metric));
     }
 
+    /// RegisterSkip registers a skipped scan.
+    #[allow(non_snake_case)]
+    pub fn RegisterSkip(&self) {
+        self.channel.enqueue(None);
+    }
+
     /// snapshot returns a read-only copy of the current metric state.
     /// This is used by the API for rendering metrics.
     pub fn snapshot(&self) -> MetricsSnapshot {
@@ -155,7 +161,10 @@ pub fn Default() -> Arc<Metrics> {
 
 /// RegisterScan fetches a metric handler and enqueues a metric.
 #[allow(non_snake_case)]
-pub fn RegisterScan(metric: &Metric) {
+pub fn RegisterScan(metric: Option<&Metric>) {
     let metrics = Default();
-    metrics.Register(metric);
+    match metric {
+        Some(m) => metrics.Register(m),
+        None => metrics.RegisterSkip(),
+    }
 }

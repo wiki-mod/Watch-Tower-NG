@@ -26,6 +26,58 @@ url = "2"
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(standalone_metrics_test)'] }
 
+[[test]]
+name = "actions_suite_test"
+path = "tests/internal/actions/actions_suite_test.rs"
+
+[[test]]
+name = "update_test"
+path = "tests/internal/actions/update_test.rs"
+
+[[test]]
+name = "cgroup_id_test"
+path = "tests/pkg/container/cgroup_id_test.rs"
+
+[[test]]
+name = "client_test"
+path = "tests/pkg/container/client_test.rs"
+
+[[test]]
+name = "auth_test"
+path = "tests/pkg/registry/auth/auth_test.rs"
+
+[[test]]
+name = "api_test"
+path = "tests/pkg/api/api_test.rs"
+
+[[test]]
+name = "metrics_test"
+path = "tests/pkg/api/metrics/metrics_test.rs"
+
+[[test]]
+name = "manifest_test"
+path = "tests/pkg/registry/manifest/manifest_test.rs"
+
+[[test]]
+name = "digest_test"
+path = "tests/pkg/registry/digest/digest_test.rs"
+
+[[test]]
+name = "helpers_test"
+path = "tests/pkg/registry/helpers/helpers_test.rs"
+
+[[test]]
+name = "registry_suite_test"
+path = "tests/pkg/registry/registry_suite_test.rs"
+
+[[test]]
+name = "notifier_test"
+path = "tests/pkg/notifications/notifier_test.rs"
+
+[[test]]
+name = "api_server_test"
+path = "tests/pkg/container/mocks/api_server_test.rs"
+
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 js-sys = "0.3"
 wasm-bindgen = "0.2"

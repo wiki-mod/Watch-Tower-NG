@@ -190,7 +190,7 @@ fn respondWithJSONFile(
 pub fn GetContainerHandlers(containerRefs: &[&ContainerRef]) -> Vec<Handler> {
     let mut handlers = Vec::with_capacity(containerRefs.len() * 3);
     for containerRef in containerRefs {
-        handlers.push(getContainerFileHandler(*containerRef));
+        handlers.push(getContainerFileHandler(containerRef));
 
         for ref_ in &containerRef.references {
             handlers.push(getContainerFileHandler(ref_));
@@ -286,7 +286,7 @@ static NET_SUPPLIER_OK: LazyLock<ContainerRef> = LazyLock::new(|| ContainerRef {
 
 static NET_SUPPLIER_NOT_FOUND: LazyLock<ContainerRef> = LazyLock::new(|| ContainerRef {
     id: ContainerID::new(NetSupplierNotFoundID),
-    name: (*NET_SUPPLIER_OK).name.clone(),
+    name: NET_SUPPLIER_OK.name.clone(),
     image: None,
     file: String::new(),
     references: Vec::new(),
@@ -301,16 +301,16 @@ pub static NetConsumerOK: LazyLock<ContainerRef> = LazyLock::new(|| ContainerRef
         file: "net_consumer".to_string(),
     })),
     file: String::new(),
-    references: vec![(*NET_SUPPLIER_OK).clone()],
+    references: vec![NET_SUPPLIER_OK.clone()],
     is_missing: false,
 });
 
 pub static NetConsumerInvalidSupplier: LazyLock<ContainerRef> = LazyLock::new(|| ContainerRef {
-    id: (*NetConsumerOK).id.clone(),
+    id: NetConsumerOK.id.clone(),
     name: "net_consumer-missing_supplier".to_string(),
-    image: (*NetConsumerOK).image.clone(),
+    image: NetConsumerOK.image.clone(),
     file: String::new(),
-    references: vec![(*NET_SUPPLIER_NOT_FOUND).clone()],
+    references: vec![NET_SUPPLIER_NOT_FOUND.clone()],
     is_missing: false,
 });
 
