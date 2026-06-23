@@ -54,8 +54,8 @@ jobs:
       - name: Build and push image
         uses: docker/build-push-action@v7
         with:
-          context: .
-          file: dockerfiles/Dockerfile.self-contained
+          context: dev/work/watchtower-rs
+          file: dev/work/watchtower-rs/dockerfiles/Dockerfile.self-contained
           push: true
           tags: |
             wiki-mod/watch-tower-ng:latest-dev
