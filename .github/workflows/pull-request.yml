@@ -1,0 +1,65 @@
+name: Pull Request
+
+on:
+  workflow_dispatch: {}
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Run clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Check formatting
+        run: cargo fmt -- --check
+  test:
+    name: Test
+    strategy:
+      fail-fast: false
+      matrix:
+        rust-version:
+          - stable
+        platform:
+          - macos-latest
+          - windows-latest
+          - ubuntu-latest
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@${{ matrix.rust-version }}
+      - name: Download dependencies
+        run: cargo fetch
+      - name: Run tests
+        run: |
+          cargo test --verbose --all-features --workspace
+      - name: Upload coverage
+        uses: codecov/codecov-action@v6
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Build
+        run: cargo build --verbose --release --all-features --workspace

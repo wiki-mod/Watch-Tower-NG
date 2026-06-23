@@ -4,3 +4,8 @@ target/
 .DS_Store
 .idea/
 dev/runtime/local.env
+
+# Rust build artifacts
+*.rlib
+*.pdb
+Cargo.lock

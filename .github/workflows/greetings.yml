@@ -1,6 +1,7 @@
 name: Greetings
 
 on:
+  # Runs in the context of the target (wiki-mod/Watch-Tower-NG) repository, and as such has access to GITHUB_TOKEN
   pull_request_target:
     types: [opened]
   issues:
