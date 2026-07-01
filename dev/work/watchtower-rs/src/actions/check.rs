@@ -1,15 +1,10 @@
 #![forbid(unsafe_code)]
 
+use crate::container::Container;
 use crate::sorter::sort_by_created_at;
-use crate::types::{ContainerID, ImageID, RuntimeContainer};
-use tracing::{debug, info};
-
-/// Cleanup work for older watchtower instances.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WatchtowerInstanceCleanupPlan {
-    pub stop_container_ids: Vec<ContainerID>,
-    pub cleanup_image_ids: Vec<ImageID>,
-}
+use crate::types::RuntimeContainer;
+use std::time::Duration;
+use tracing::{debug, error, info, warn};
 
 /// CheckForSanity makes sure everything is sane before starting.
 ///
@@ -39,60 +34,84 @@ pub fn check_for_sanity<C: RuntimeContainer>(
 
 /// CheckForMultipleWatchtowerInstances ensures that there are not multiple instances of the
 /// watchtower running simultaneously. If multiple watchtower containers are detected, this function
-/// will stop and remove all but the most recently started container. This behaviour can be bypassed
-/// if a scope UID is defined.
+/// will stop and remove all but the most recently started container.
 ///
-/// Returns a cleanup plan with the containers to stop and optionally the images to remove,
-/// or None if there are 1 or fewer instances.
+/// Executes container stops and image removals directly (mirroring Go semantics).
+/// Returns Ok(()) if successful, or Err with a count of errors if stops failed.
 ///
 /// Mirrors `CheckForMultipleWatchtowerInstances(client container.Client, cleanup bool, scope string) error`
-/// from `internal/actions/check.go`. The client/scope parameters are handled at the call site; this
-/// function only validates and orders the containers for cleanup.
-pub fn check_for_multiple_watchtower_instances<C: RuntimeContainer + Clone>(
-    containers: &[C],
+/// from `internal/actions/check.go`. The scope filtering is applied at the call site.
+pub fn check_for_multiple_watchtower_instances<C>(
+    client: &C,
+    containers: &[Container],
     cleanup: bool,
-) -> Option<WatchtowerInstanceCleanupPlan> {
+) -> Result<(), String>
+where
+    C: crate::actions::UpdateClient,
+    C::Error: std::fmt::Display,
+{
     if containers.len() <= 1 {
         debug!("There are no additional watchtower containers");
-        return None;
+        return Ok(());
     }
 
     info!("Found multiple running watchtower instances. Cleaning up.");
-    cleanup_excess_watchtowers(containers, cleanup)
+    cleanup_excess_watchtowers(client, containers, cleanup)
 }
 
-fn cleanup_excess_watchtowers<C: RuntimeContainer + Clone>(
-    containers: &[C],
+fn cleanup_excess_watchtowers<C>(
+    client: &C,
+    containers: &[Container],
     cleanup: bool,
-) -> Option<WatchtowerInstanceCleanupPlan> {
+) -> Result<(), String>
+where
+    C: crate::actions::UpdateClient,
+    C::Error: std::fmt::Display,
+{
+    let mut stop_errors = 0;
     let mut ordered = sort_by_created_at(containers);
+
     // Remove the most recently created (last in sorted order), keep all others for stopping
     if !ordered.is_empty() {
         ordered.pop();
     }
 
-    let stop_container_ids = ordered.iter().map(|c| c.id().clone()).collect();
+    for container in &ordered {
+        match client.stop_container(container, Duration::from_secs(600)) {
+            Ok(()) => {
+                if cleanup {
+                    if let Err(err) = client.remove_image_by_id(container.image_id()) {
+                        warn!(
+                            "Could not cleanup watchtower images, possibly because of other watchtowers instances in other scopes: {}",
+                            err
+                        );
+                    }
+                }
+            }
+            Err(err) => {
+                error!("Could not stop a previous watchtower instance: {}", err);
+                stop_errors += 1;
+            }
+        }
+    }
 
-    let cleanup_image_ids = if cleanup {
-        ordered
-            .iter()
-            .map(|c| c.image_id().clone())
-            .filter(|id| !id.as_str().is_empty())
-            .collect::<Vec<_>>()
+    if stop_errors > 0 {
+        Err(format!(
+            "{} errors while stopping watchtower containers",
+            stop_errors
+        ))
     } else {
-        Vec::new()
-    };
-
-    Some(WatchtowerInstanceCleanupPlan {
-        stop_container_ids,
-        cleanup_image_ids,
-    })
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::container::{ContainerConfig, ContainerInspect, ContainerState, HostConfig, ImageInspect};
     use crate::types::{ContainerID, ImageID, UpdateParams};
+    use std::collections::BTreeMap;
+    use std::sync::{Arc, Mutex};
 
     #[derive(Clone, Debug, PartialEq, Eq)]
     struct TestContainer {
@@ -145,27 +164,176 @@ mod tests {
         }
     }
 
-    fn test_container(id: &str, name: &str, image_id: &str, created_at: &str) -> TestContainer {
-        TestContainer {
-            id: ContainerID::from(id),
-            name: name.to_string(),
-            links: Vec::new(),
-            image_id: ImageID::from(image_id),
-            created_at: created_at.to_string(),
+    fn test_container(id: &str, name: &str, image_id: &str, created_at_str: &str) -> Container {
+        Container::new(
+            ContainerInspect {
+                id: ContainerID::new(id),
+                name: format!("/{}", name),
+                image: ImageID::new(image_id),
+                created: created_at_str.to_string(),
+                state: ContainerState {
+                    running: true,
+                    restarting: false,
+                },
+                config: Some(ContainerConfig {
+                    image: "test:latest".to_string(),
+                    labels: BTreeMap::new(),
+                    working_dir: String::new(),
+                    user: String::new(),
+                    entrypoint: Vec::new(),
+                    cmd: Vec::new(),
+                    env: Vec::new(),
+                    volumes: Default::default(),
+                    exposed_ports: None,
+                    healthcheck: None,
+                    hostname: String::new(),
+                }),
+                host_config: Some(HostConfig {
+                    links: Vec::new(),
+                    network_mode: Default::default(),
+                    port_bindings: Default::default(),
+                    auto_remove: false,
+                }),
+                network_settings: None,
+            },
+            Some(ImageInspect {
+                id: ImageID::new(image_id),
+                config: ContainerConfig {
+                    image: "test:latest".to_string(),
+                    labels: BTreeMap::new(),
+                    working_dir: String::new(),
+                    user: String::new(),
+                    entrypoint: Vec::new(),
+                    cmd: Vec::new(),
+                    env: Vec::new(),
+                    volumes: Default::default(),
+                    exposed_ports: None,
+                    healthcheck: None,
+                    hostname: String::new(),
+                },
+            }),
+        )
+    }
+
+    /// Mock client that tracks stop and remove calls
+    #[derive(Clone)]
+    struct MockClient {
+        stopped_ids: Arc<Mutex<Vec<ContainerID>>>,
+        removed_image_ids: Arc<Mutex<Vec<ImageID>>>,
+    }
+
+    impl MockClient {
+        fn new() -> Self {
+            Self {
+                stopped_ids: Arc::new(Mutex::new(Vec::new())),
+                removed_image_ids: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+
+        fn stopped_count(&self) -> usize {
+            self.stopped_ids.lock().unwrap().len()
+        }
+
+        fn removed_image_count(&self) -> usize {
+            self.removed_image_ids.lock().unwrap().len()
+        }
+
+        fn stopped_ids(&self) -> Vec<ContainerID> {
+            self.stopped_ids.lock().unwrap().clone()
+        }
+
+        fn removed_image_ids(&self) -> Vec<ImageID> {
+            self.removed_image_ids.lock().unwrap().clone()
+        }
+    }
+
+    impl crate::lifecycle::LifecycleClient for MockClient {
+        type Error = String;
+
+        fn list_containers(&self) -> std::result::Result<Vec<Container>, Self::Error> {
+            Ok(Vec::new())
+        }
+
+        fn get_container(
+            &self,
+            _container_id: &ContainerID,
+        ) -> std::result::Result<Container, Self::Error> {
+            Err("not implemented".to_string())
+        }
+
+        fn execute_command(
+            &self,
+            _container_id: &ContainerID,
+            _command: &str,
+            _timeout_minutes: i64,
+        ) -> std::result::Result<bool, Self::Error> {
+            Err("not implemented".to_string())
+        }
+    }
+
+    impl crate::actions::UpdateClient for MockClient {
+        fn is_container_stale(
+            &self,
+            _container: &Container,
+            _params: &UpdateParams,
+        ) -> std::result::Result<(bool, ImageID), Self::Error> {
+            Err("not implemented".to_string())
+        }
+
+        fn stop_container(
+            &self,
+            container: &Container,
+            _timeout: Duration,
+        ) -> std::result::Result<(), Self::Error> {
+            self.stopped_ids.lock().unwrap().push(container.id().clone());
+            Ok(())
+        }
+
+        fn start_container(
+            &self,
+            _container: &Container,
+        ) -> std::result::Result<ContainerID, Self::Error> {
+            Err("not implemented".to_string())
+        }
+
+        fn rename_container(
+            &self,
+            _container: &Container,
+            _new_name: &str,
+        ) -> std::result::Result<(), Self::Error> {
+            Err("not implemented".to_string())
+        }
+
+        fn remove_image_by_id(&self, image_id: &ImageID) -> std::result::Result<(), Self::Error> {
+            self.removed_image_ids.lock().unwrap().push(image_id.clone());
+            Ok(())
         }
     }
 
     #[test]
     fn check_for_sanity_allows_no_links() {
         let c = test_container("1", "test", "sha256:img", "2024-06-18T12:00:00Z");
-        assert!(check_for_sanity(&[c], true).is_ok());
+        let c_test = TestContainer {
+            id: c.id().clone(),
+            name: c.name().to_string(),
+            links: Vec::new(),
+            image_id: c.image_id().clone(),
+            created_at: c.created_at().to_string(),
+        };
+        assert!(check_for_sanity(&[c_test], true).is_ok());
     }
 
     #[test]
     fn check_for_sanity_rejects_links_with_rolling_restarts() {
-        let mut c = test_container("1", "test", "sha256:img", "2024-06-18T12:00:00Z");
-        c.links = vec!["/db".to_string()];
-        let result = check_for_sanity(&[c], true);
+        let c = test_container("1", "test", "sha256:img", "2024-06-18T12:00:00Z");
+        let c_test = TestContainer {
+            id: c.id().clone(),
+            name: c.name().to_string(),
+            links: vec!["/db".to_string()],
+            image_id: c.image_id().clone(),
+            created_at: c.created_at().to_string(),
+        };
+        let result = check_for_sanity(&[c_test], true);
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
@@ -174,50 +342,62 @@ mod tests {
 
     #[test]
     fn check_for_sanity_allows_links_without_rolling_restarts() {
-        let mut c = test_container("1", "test", "sha256:img", "2024-06-18T12:00:00Z");
-        c.links = vec!["/db".to_string()];
-        assert!(check_for_sanity(&[c], false).is_ok());
+        let c = test_container("1", "test", "sha256:img", "2024-06-18T12:00:00Z");
+        let c_test = TestContainer {
+            id: c.id().clone(),
+            name: c.name().to_string(),
+            links: vec!["/db".to_string()],
+            image_id: c.image_id().clone(),
+            created_at: c.created_at().to_string(),
+        };
+        assert!(check_for_sanity(&[c_test], false).is_ok());
     }
 
     #[test]
-    fn check_for_multiple_watchtower_instances_returns_none_for_single() {
+    fn check_for_multiple_watchtower_instances_returns_ok_for_single() {
+        let client = MockClient::new();
         let c = test_container("1", "wt1", "sha256:wt", "2024-06-18T12:00:00Z");
-        assert!(check_for_multiple_watchtower_instances(&[c], false).is_none());
+        assert!(check_for_multiple_watchtower_instances(&client, &[c], false).is_ok());
+        assert_eq!(client.stopped_count(), 0);
     }
 
     #[test]
-    fn check_for_multiple_watchtower_instances_returns_plan_for_multiple() {
+    fn check_for_multiple_watchtower_instances_stops_older_without_cleanup() {
+        let client = MockClient::new();
         let c1 = test_container("1", "wt1", "sha256:wt1", "2024-06-18T11:00:00Z");
         let c2 = test_container("2", "wt2", "sha256:wt2", "2024-06-18T12:00:00Z");
 
-        let plan = check_for_multiple_watchtower_instances(&[c1.clone(), c2.clone()], false)
-            .expect("plan should exist");
+        assert!(check_for_multiple_watchtower_instances(&client, &[c1.clone(), c2.clone()], false)
+            .is_ok());
 
-        // Should return the older one (c1) for stopping
-        assert_eq!(plan.stop_container_ids.len(), 1);
-        assert_eq!(plan.stop_container_ids[0], c1.id);
+        // Should have stopped the older one (c1)
+        assert_eq!(client.stopped_count(), 1);
+        assert_eq!(client.stopped_ids()[0], *c1.id());
         // No cleanup without cleanup flag
-        assert!(plan.cleanup_image_ids.is_empty());
+        assert_eq!(client.removed_image_count(), 0);
     }
 
     #[test]
-    fn check_for_multiple_watchtower_instances_keeps_newest() {
+    fn check_for_multiple_watchtower_instances_stops_and_removes_with_cleanup() {
+        let client = MockClient::new();
         let c1 = test_container("1", "wt1", "sha256:wt1", "2024-06-18T11:00:00Z");
         let c2 = test_container("2", "wt2", "sha256:wt2", "2024-06-18T12:00:00Z");
         let c3 = test_container("3", "wt3", "sha256:wt3", "2024-06-18T11:30:00Z");
 
-        let plan = check_for_multiple_watchtower_instances(&[c1.clone(), c2.clone(), c3.clone()], true)
-            .expect("plan should exist");
+        assert!(check_for_multiple_watchtower_instances(&client, &[c1.clone(), c2.clone(), c3.clone()], true)
+            .is_ok());
 
-        // Should return all except the newest (c2)
-        assert_eq!(plan.stop_container_ids.len(), 2);
-        assert!(plan.stop_container_ids.contains(&c1.id));
-        assert!(plan.stop_container_ids.contains(&c3.id));
-        assert!(!plan.stop_container_ids.contains(&c2.id));
+        // Should have stopped all except the newest (c2)
+        assert_eq!(client.stopped_count(), 2);
+        let stopped = client.stopped_ids();
+        assert!(stopped.contains(&c1.id().clone()));
+        assert!(stopped.contains(&c3.id().clone()));
+        assert!(!stopped.contains(&c2.id().clone()));
 
-        // With cleanup, should include image IDs (excluding c2's image)
-        assert_eq!(plan.cleanup_image_ids.len(), 2);
-        assert!(plan.cleanup_image_ids.contains(&c1.image_id));
-        assert!(plan.cleanup_image_ids.contains(&c3.image_id));
+        // With cleanup, should have removed images (excluding c2's image)
+        assert_eq!(client.removed_image_count(), 2);
+        let removed = client.removed_image_ids();
+        assert!(removed.contains(&c1.image_id().clone()));
+        assert!(removed.contains(&c3.image_id().clone()));
     }
 }

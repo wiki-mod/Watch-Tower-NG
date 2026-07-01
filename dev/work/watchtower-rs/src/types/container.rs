@@ -180,8 +180,11 @@ impl Container for ContainerModel {
     }
 
     fn scope(&self) -> (Option<&str>, bool) {
-        let scope = ContainerModel::scope(self);
-        (scope, scope.is_some())
+        let scope_value = ContainerModel::scope(self);
+        match scope_value {
+            Some(value) => (Some(value), true),
+            None => (None, false),
+        }
     }
 
     fn links(&self) -> &[String] {

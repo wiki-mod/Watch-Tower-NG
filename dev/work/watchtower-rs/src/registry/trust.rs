@@ -7,6 +7,8 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use base64::engine::general_purpose::URL_SAFE;
+use base64::Engine;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tracing::{debug, error};
@@ -72,13 +74,12 @@ pub fn encoded_config_auth(image_ref: &str) -> Result<String> {
     encoded_config_auth_from_path(image_ref, &config_path)
 }
 
-/// Return whether the given registry rate-limits API usage.
+
+/// Internal helper: Return whether the given registry rate-limits API usage.
 ///
-/// Returns `true` for Docker Hub and GitHub Container Registry.
-/// Callers should `.unwrap_or(true)` for fail-closed behavior.
-///
-/// Mirrors Go's `WarnOnAPIConsumption` in `pkg/registry/registry.go`.
-pub fn warn_on_api_consumption(image_name: &str) -> Result<bool> {
+/// This is used by legacy code paths that work directly with image names rather
+/// than Container objects. The public API (via `registry::core`) is preferred.
+pub fn warn_on_api_consumption_by_name(image_name: &str) -> Result<bool> {
     let registry = helpers::get_registry_address(image_name)?;
     Ok(matches!(
         registry.as_str(),
@@ -148,11 +149,12 @@ fn encode_auth_json(username: &str, password: &str) -> Result<String> {
     let payload = AuthPayload { username, password };
     let serialized =
         serde_json::to_vec(&payload).map_err(|e| TrustError::ConfigParse { message: e.to_string() })?;
-    Ok(encode_base64_urlsafe(&serialized))
+    Ok(URL_SAFE.encode(&serialized))
 }
 
 fn decode_auth_json(auth: &str) -> Result<(String, String)> {
-    let decoded = decode_base64(auth)?;
+    let decoded =
+        URL_SAFE.decode(auth).map_err(|_| TrustError::InvalidAuthEncoding)?;
     let decoded = String::from_utf8(decoded).map_err(|_| TrustError::InvalidAuthEncoding)?;
     let Some((username, password)) = decoded.split_once(':') else {
         return Err(TrustError::InvalidAuthEncoding);
@@ -255,103 +257,6 @@ fn canonical_registry_key(input: &str) -> String {
     }
 }
 
-fn decode_base64(input: &str) -> Result<Vec<u8>> {
-    let mut output = Vec::with_capacity(input.len() * 3 / 4);
-    let mut chunk = [0u8; 4];
-    let mut chunk_len = 0usize;
-    let mut padding = 0usize;
-
-    for byte in input.bytes() {
-        if byte.is_ascii_whitespace() {
-            continue;
-        }
-
-        let value = match byte {
-            b'A'..=b'Z' => byte - b'A',
-            b'a'..=b'z' => byte - b'a' + 26,
-            b'0'..=b'9' => byte - b'0' + 52,
-            b'+' | b'-' => 62,
-            b'/' | b'_' => 63,
-            b'=' => {
-                padding += 1;
-                0
-            }
-            _ => return Err(TrustError::InvalidAuthEncoding),
-        };
-
-        chunk[chunk_len] = value;
-        chunk_len += 1;
-
-        if chunk_len == 4 {
-            decode_base64_chunk(&chunk, padding, &mut output)?;
-            chunk_len = 0;
-            padding = 0;
-        }
-    }
-
-    if chunk_len != 0 {
-        return Err(TrustError::InvalidAuthEncoding);
-    }
-
-    Ok(output)
-}
-
-fn decode_base64_chunk(chunk: &[u8; 4], padding: usize, output: &mut Vec<u8>) -> Result<()> {
-    match padding {
-        0 => {
-            output.push((chunk[0] << 2) | (chunk[1] >> 4));
-            output.push((chunk[1] << 4) | (chunk[2] >> 2));
-            output.push((chunk[2] << 6) | chunk[3]);
-        }
-        1 => {
-            output.push((chunk[0] << 2) | (chunk[1] >> 4));
-            output.push((chunk[1] << 4) | (chunk[2] >> 2));
-        }
-        2 => {
-            output.push((chunk[0] << 2) | (chunk[1] >> 4));
-        }
-        _ => return Err(TrustError::InvalidAuthEncoding),
-    }
-
-    Ok(())
-}
-
-fn encode_base64_urlsafe(input: &[u8]) -> String {
-    const TABLE: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-
-    let mut output = String::with_capacity(input.len().div_ceil(3) * 4);
-    let mut index = 0usize;
-
-    while index < input.len() {
-        let remaining = input.len() - index;
-        let chunk = &input[index..usize::min(index + 3, input.len())];
-
-        let first = chunk[0] >> 2;
-        let second =
-            ((chunk[0] & 0b0000_0011) << 4) | (chunk.get(1).copied().unwrap_or(0) >> 4);
-        let third = ((chunk.get(1).copied().unwrap_or(0) & 0b0000_1111) << 2)
-            | (chunk.get(2).copied().unwrap_or(0) >> 6);
-        let fourth = chunk.get(2).copied().unwrap_or(0) & 0b0011_1111;
-
-        output.push(TABLE[first as usize] as char);
-        output.push(TABLE[second as usize] as char);
-        if remaining > 1 {
-            output.push(TABLE[third as usize] as char);
-        } else {
-            output.push('=');
-        }
-        if remaining > 2 {
-            output.push(TABLE[fourth as usize] as char);
-        } else {
-            output.push('=');
-        }
-
-        index += 3;
-    }
-
-    output
-}
 
 #[cfg(test)]
 mod tests {
@@ -456,8 +361,8 @@ mod tests {
     #[test]
     fn base64_round_trip() {
         let original = b"hello world";
-        let encoded = encode_base64_urlsafe(original);
-        let decoded = decode_base64(&encoded).expect("should decode");
+        let encoded = URL_SAFE.encode(original);
+        let decoded = URL_SAFE.decode(&encoded).expect("should decode");
         assert_eq!(decoded, original.to_vec());
     }
 

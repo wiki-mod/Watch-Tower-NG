@@ -1,9 +1,18 @@
-use std::sync::{Arc, Condvar, Mutex, OnceLock};
+#![forbid(unsafe_code)]
+
+use std::sync::OnceLock;
 use std::thread;
 
 use crate::types;
+use prometheus::{Counter, Gauge, Opts, Registry};
 
 const CHANNEL_CAPACITY: usize = 10;
+
+/// Global prometheus registry for metrics.
+fn get_registry() -> &'static Registry {
+    static REGISTRY: OnceLock<Registry> = OnceLock::new();
+    REGISTRY.get_or_init(Registry::new)
+}
 
 /// Metric is the data points of a single scan.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -13,119 +22,129 @@ pub struct Metric {
     pub failed: usize,
 }
 
-/// Read-only copy of the current metric state for API rendering.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct MetricsSnapshot {
-    pub scanned: usize,
-    pub updated: usize,
-    pub failed: usize,
-    pub total: usize,
-    pub skipped: usize,
-}
-
 /// Metrics is the handler processing all individual scan metrics.
-#[derive(Debug)]
+/// Uses prometheus client for actual metric tracking.
+#[derive(Clone)]
 pub struct Metrics {
-    channel: Arc<MetricChannel>,
-    state: Mutex<MetricsSnapshot>,
+    scanned: Gauge,
+    updated: Gauge,
+    failed: Gauge,
+    total: Counter,
+    skipped: Counter,
 }
 
-#[derive(Debug)]
-struct MetricChannel {
-    queue: Mutex<Vec<Option<Metric>>>,
-    not_empty: Condvar,
-}
-
-impl MetricChannel {
-    fn new() -> Self {
-        Self {
-            queue: Mutex::new(Vec::with_capacity(CHANNEL_CAPACITY)),
-            not_empty: Condvar::new(),
-        }
-    }
-
-    fn enqueue(&self, metric: Option<Metric>) {
-        let mut queue = self.queue.lock().expect("metrics channel lock poisoned");
-        queue.push(metric);
-        self.not_empty.notify_one();
-    }
-
-    fn dequeue(&self) -> Option<Metric> {
-        let mut queue = self.queue.lock().expect("metrics channel lock poisoned");
-        while queue.is_empty() {
-            queue = self
-                .not_empty
-                .wait(queue)
-                .expect("metrics channel lock poisoned");
-        }
-        queue.remove(0)
-    }
-
-    fn is_empty(&self) -> bool {
-        self.queue
-            .lock()
-            .expect("metrics channel lock poisoned")
-            .is_empty()
+impl std::fmt::Debug for Metrics {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Metrics").finish()
     }
 }
 
 impl Metrics {
-    fn new() -> Self {
-        Self {
-            channel: Arc::new(MetricChannel::new()),
-            state: Mutex::new(MetricsSnapshot::default()),
-        }
+    fn new() -> Result<Self, prometheus::Error> {
+        let registry = get_registry();
+
+        let scanned_opts = Opts::new(
+            "watchtower_containers_scanned",
+            "Number of containers scanned for changes by watchtower during the last scan",
+        );
+        let scanned = Gauge::with_opts(scanned_opts)?;
+        registry.register(Box::new(scanned.clone()))?;
+
+        let updated_opts = Opts::new(
+            "watchtower_containers_updated",
+            "Number of containers updated by watchtower during the last scan",
+        );
+        let updated = Gauge::with_opts(updated_opts)?;
+        registry.register(Box::new(updated.clone()))?;
+
+        let failed_opts = Opts::new(
+            "watchtower_containers_failed",
+            "Number of containers where update failed during the last scan",
+        );
+        let failed = Gauge::with_opts(failed_opts)?;
+        registry.register(Box::new(failed.clone()))?;
+
+        let total_opts = Opts::new(
+            "watchtower_scans_total",
+            "Number of scans since the watchtower started",
+        );
+        let total = Counter::with_opts(total_opts)?;
+        registry.register(Box::new(total.clone()))?;
+
+        let skipped_opts = Opts::new(
+            "watchtower_scans_skipped",
+            "Number of skipped scans since watchtower started",
+        );
+        let skipped = Counter::with_opts(skipped_opts)?;
+        registry.register(Box::new(skipped.clone()))?;
+
+        Ok(Self {
+            scanned,
+            updated,
+            failed,
+            total,
+            skipped,
+        })
+    }
+
+    fn with_channel(self) -> Self {
+        let (_tx, rx) = std::sync::mpsc::sync_channel(CHANNEL_CAPACITY);
+
+        // Spawn worker thread to process metric updates
+        let worker_metrics = self.clone();
+        thread::Builder::new()
+            .name("watchtower-metrics".to_string())
+            .spawn(move || {
+                while let Ok(change) = rx.recv() {
+                    worker_metrics.apply_update(change);
+                }
+            })
+            .expect("failed to spawn metrics worker");
+
+        self
     }
 
     /// QueueIsEmpty checks whether any messages are enqueued in the channel.
     #[allow(non_snake_case)]
     pub fn QueueIsEmpty(&self) -> bool {
-        self.channel.is_empty()
+        // For prometheus-based metrics, we consider the queue always empty
+        // since we're processing synchronously now
+        true
     }
 
     /// Register registers metrics for an executed scan.
     #[allow(non_snake_case)]
     pub fn Register(&self, metric: &Metric) {
-        self.channel.enqueue(Some(*metric));
+        self.scanned.set(metric.scanned as f64);
+        self.updated.set(metric.updated as f64);
+        self.failed.set(metric.failed as f64);
+        self.total.inc();
     }
 
     /// RegisterSkip registers a skipped scan.
     #[allow(non_snake_case)]
     pub fn RegisterSkip(&self) {
-        self.channel.enqueue(None);
-    }
-
-    /// snapshot returns a read-only copy of the current metric state.
-    /// This is used by the API for rendering metrics.
-    pub fn snapshot(&self) -> MetricsSnapshot {
-        *self.state.lock().expect("metrics state lock poisoned")
-    }
-
-    /// HandleUpdate dequeues the metric channel and processes it.
-    #[allow(non_snake_case)]
-    pub fn HandleUpdate(self: Arc<Self>) -> ! {
-        loop {
-            let change = self.channel.dequeue();
-            self.apply_update(change);
-        }
+        self.scanned.set(0.0);
+        self.updated.set(0.0);
+        self.failed.set(0.0);
+        self.total.inc();
+        self.skipped.inc();
     }
 
     fn apply_update(&self, change: Option<Metric>) {
-        let mut state = self.state.lock().expect("metrics state lock poisoned");
-
-        state.total += 1;
+        self.total.inc();
 
         match change {
             Some(change) => {
-                state.scanned = change.scanned;
-                state.updated = change.updated;
-                state.failed = change.failed;
+                self.scanned.set(change.scanned as f64);
+                self.updated.set(change.updated as f64);
+                self.failed.set(change.failed as f64);
             }
             None => {
-                state.skipped += 1;
-                state.scanned = 0;
-                state.updated = 0;
-                state.failed = 0;
+                self.skipped.inc();
+                self.scanned.set(0.0);
+                self.updated.set(0.0);
+                self.failed.set(0.0);
             }
         }
     }
@@ -145,18 +164,12 @@ pub fn NewMetric(report: &types::Report) -> Metric {
 
 /// Default creates a new metrics handler if none exists, otherwise returns the existing one.
 #[allow(non_snake_case)]
-pub fn Default() -> Arc<Metrics> {
-    static METRICS: OnceLock<Arc<Metrics>> = OnceLock::new();
+pub fn Default() -> Metrics {
+    static METRICS: OnceLock<Metrics> = OnceLock::new();
 
-    Arc::clone(METRICS.get_or_init(|| {
-        let metrics = Arc::new(Metrics::new());
-        let worker = Arc::clone(&metrics);
-        thread::Builder::new()
-            .name("watchtower-metrics".to_string())
-            .spawn(move || worker.HandleUpdate())
-            .expect("failed to spawn metrics worker");
-        metrics
-    }))
+    METRICS
+        .get_or_init(|| Metrics::new().expect("failed to initialize prometheus metrics").with_channel())
+        .clone()
 }
 
 /// RegisterScan fetches a metric handler and enqueues a metric.
@@ -167,4 +180,9 @@ pub fn RegisterScan(metric: Option<&Metric>) {
         Some(m) => metrics.Register(m),
         None => metrics.RegisterSkip(),
     }
+}
+
+/// Returns the prometheus registry for rendering metrics.
+pub fn registry() -> &'static Registry {
+    get_registry()
 }

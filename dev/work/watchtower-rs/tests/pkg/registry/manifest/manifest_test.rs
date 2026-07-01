@@ -1,9 +1,9 @@
 #![forbid(unsafe_code)]
 
-use watchtower_rs::registry::manifest::{build_manifest_url, Result};
+use watchtower_rs::registry::manifest::{build_manifest_url_from_ref, Result};
 
 fn build_mock_container_manifest_url(image_ref: &str) -> Result<String> {
-    build_manifest_url(image_ref)
+    build_manifest_url_from_ref(image_ref)
 }
 
 #[test]

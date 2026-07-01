@@ -81,6 +81,10 @@ mod tests {
         fn current_image_id(&self) -> &ImageID {
             &self.current_image_id
         }
+
+        fn safe_image_id(&self) -> ImageID {
+            self.current_image_id.clone()
+        }
     }
 
     fn container(id: &str, name: &str, image_name: &str, current_image_id: &str) -> MockContainer {

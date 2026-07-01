@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 
 use crate::container::Container;
-use crate::lifecycle::{self, HookOutcome, LifecycleClient};
+use crate::lifecycle::{self, LifecycleClient};
 use crate::rand_name::rand_name;
 use crate::session::Progress;
 use crate::sorter::sort_by_dependencies;
@@ -258,7 +258,7 @@ where
 
     if params.lifecycle_hooks {
         match lifecycle::execute_pre_update_command(client, container) {
-            Ok(HookOutcome::Executed { skip_update: true }) => {
+            Ok(true) => {
                 debug!(
                     "Skipping container as the pre-update command returned exit code 75 (EX_TEMPFAIL)"
                 );
@@ -267,7 +267,7 @@ where
                         .to_string(),
                 );
             }
-            Ok(HookOutcome::Executed { skip_update: false }) | Ok(HookOutcome::Skipped(_)) => {}
+            Ok(false) => {}
             Err(_) => {
                 error!("pre-update execution failed");
                 info!("Skipping container as the pre-update command failed");

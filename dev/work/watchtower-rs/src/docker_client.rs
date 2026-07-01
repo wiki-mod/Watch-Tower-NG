@@ -1823,7 +1823,7 @@ pub fn warn_on_head_pull_failed(strategy: WarningStrategy, image_name: &str) -> 
     match strategy {
         WarningStrategy::Always => true,
         WarningStrategy::Never => false,
-        WarningStrategy::Auto => trust::warn_on_api_consumption(image_name).unwrap_or(true),
+        WarningStrategy::Auto => trust::warn_on_api_consumption_by_name(image_name).unwrap_or(true),
     }
 }
 

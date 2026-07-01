@@ -69,7 +69,7 @@ pub fn compare_digest<D: AsRef<str>>(
     repo_digests: &[D],
     registry_auth: &str,
 ) -> Result<bool> {
-    let digest_url = manifest::build_manifest_url(image_ref).map_err(|err| {
+    let digest_url = manifest::build_manifest_url_from_ref(image_ref).map_err(|err| {
         DigestError::InvalidImageReference {
             image_ref: image_ref.to_string(),
             reason: err.to_string(),

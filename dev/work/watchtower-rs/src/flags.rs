@@ -244,6 +244,121 @@ pub fn docker_defaults() -> HashMap<&'static str, &'static str> {
     ])
 }
 
+/// Legacy Docker flag registration information (for reference / documentation).
+///
+/// Maps the clap-based flags in `cli.rs::DockerArgs` to their original Go counterparts
+/// and environment variable bindings from `old-source/internal/flags/flags.go`.
+///
+/// Flags:
+/// - `host` / `-H` → DOCKER_HOST (default: unix:///var/run/docker.sock)
+/// - `tlsverify` / `-v` → DOCKER_TLS_VERIFY (default: false)
+/// - `api-version` / `-a` → DOCKER_API_VERSION (default: 1.52)
+#[allow(dead_code)]
+pub struct DockerFlagsInfo {
+    /// Docker daemon socket to connect to
+    pub host: &'static str,
+    /// Use TLS and verify the remote Docker daemon
+    pub tlsverify: &'static str,
+    /// API version to use by Docker client
+    pub api_version: &'static str,
+}
+
+/// Legacy System flag registration information (for reference / documentation).
+///
+/// Maps the clap-based flags in `cli.rs::SchedulingArgs`, `cli.rs::UpdateArgs`,
+/// `cli.rs::SelectionArgs`, `cli.rs::LoggingArgs`, and `cli.rs::WatchtowerCli`
+/// to their original Go counterparts from `old-source/internal/flags/flags.go`.
+///
+/// Scheduling/Polling:
+/// - `interval` / `-i` → WATCHTOWER_POLL_INTERVAL (default: 86400 seconds)
+/// - `schedule` / `-s` → WATCHTOWER_SCHEDULE
+/// - `stop-timeout` / `-t` → WATCHTOWER_TIMEOUT (default: 10s)
+///
+/// Update behavior:
+/// - `no-pull` → WATCHTOWER_NO_PULL
+/// - `no-restart` → WATCHTOWER_NO_RESTART
+/// - `cleanup` / `-c` → WATCHTOWER_CLEANUP
+/// - `remove-volumes` → WATCHTOWER_REMOVE_VOLUMES
+/// - `rolling-restart` → WATCHTOWER_ROLLING_RESTART
+/// - `include-restarting` → WATCHTOWER_INCLUDE_RESTARTING
+/// - `include-stopped` / `-S` → WATCHTOWER_INCLUDE_STOPPED
+/// - `revive-stopped` → WATCHTOWER_REVIVE_STOPPED
+/// - `monitor-only` / `-m` → WATCHTOWER_MONITOR_ONLY
+/// - `run-once` / `-R` → WATCHTOWER_RUN_ONCE
+/// - `label-take-precedence` → WATCHTOWER_LABEL_TAKE_PRECEDENCE
+///
+/// Selection/Filters:
+/// - `label-enable` / `-e` → WATCHTOWER_LABEL_ENABLE
+/// - `disable-containers` / `-x` → WATCHTOWER_DISABLE_CONTAINERS
+/// - `scope` → WATCHTOWER_SCOPE
+///
+/// Logging:
+/// - `log-level` → WATCHTOWER_LOG_LEVEL (default: info)
+/// - `log-format` / `-l` → WATCHTOWER_LOG_FORMAT (default: auto)
+/// - `debug` / `-d` → WATCHTOWER_DEBUG
+/// - `trace` → WATCHTOWER_TRACE
+/// - `no-color` → NO_COLOR
+/// - `no-startup-message` → WATCHTOWER_NO_STARTUP_MESSAGE
+///
+/// HTTP API:
+/// - `http-api-update` → WATCHTOWER_HTTP_API_UPDATE
+/// - `http-api-metrics` → WATCHTOWER_HTTP_API_METRICS
+/// - `http-api-token` → WATCHTOWER_HTTP_API_TOKEN
+/// - `http-api-periodic-polls` → WATCHTOWER_HTTP_API_PERIODIC_POLLS
+///
+/// Lifecycle:
+/// - `enable-lifecycle-hooks` → WATCHTOWER_LIFECYCLE_HOOKS
+#[allow(dead_code)]
+pub struct SystemFlagsInfo;
+
+/// Legacy Notification flag registration information (for reference / documentation).
+///
+/// Maps the clap-based flags in `cli.rs::NotificationArgs` and related
+/// to their original Go counterparts from `old-source/internal/flags/flags.go`.
+///
+/// General Notification:
+/// - `notifications` / `-n` → WATCHTOWER_NOTIFICATIONS
+/// - `notifications-level` → WATCHTOWER_NOTIFICATIONS_LEVEL (default: info)
+/// - `notifications-delay` → WATCHTOWER_NOTIFICATIONS_DELAY (seconds)
+/// - `notifications-hostname` → WATCHTOWER_NOTIFICATIONS_HOSTNAME
+/// - `notification-report` → WATCHTOWER_NOTIFICATION_REPORT
+/// - `notification-template` → WATCHTOWER_NOTIFICATION_TEMPLATE
+/// - `notification-url` → WATCHTOWER_NOTIFICATION_URL
+/// - `notification-title-tag` → WATCHTOWER_NOTIFICATION_TITLE_TAG
+/// - `notification-skip-title` → WATCHTOWER_NOTIFICATION_SKIP_TITLE
+/// - `notification-log-stdout` → WATCHTOWER_NOTIFICATION_LOG_STDOUT
+/// - `warn-on-head-failure` → WATCHTOWER_WARN_ON_HEAD_FAILURE (default: auto)
+/// - `porcelain` / `-P` → WATCHTOWER_PORCELAIN
+///
+/// Email Notification:
+/// - `notification-email-from` → WATCHTOWER_NOTIFICATION_EMAIL_FROM
+/// - `notification-email-to` → WATCHTOWER_NOTIFICATION_EMAIL_TO
+/// - `notification-email-server` → WATCHTOWER_NOTIFICATION_EMAIL_SERVER
+/// - `notification-email-server-port` → WATCHTOWER_NOTIFICATION_EMAIL_SERVER_PORT (default: 25)
+/// - `notification-email-server-user` → WATCHTOWER_NOTIFICATION_EMAIL_SERVER_USER
+/// - `notification-email-server-password` → WATCHTOWER_NOTIFICATION_EMAIL_SERVER_PASSWORD
+/// - `notification-email-server-tls-skip-verify` → WATCHTOWER_NOTIFICATION_EMAIL_SERVER_TLS_SKIP_VERIFY
+/// - `notification-email-delay` → WATCHTOWER_NOTIFICATION_EMAIL_DELAY (seconds)
+/// - `notification-email-subjecttag` → WATCHTOWER_NOTIFICATION_EMAIL_SUBJECTTAG
+///
+/// Slack Notification:
+/// - `notification-slack-hook-url` → WATCHTOWER_NOTIFICATION_SLACK_HOOK_URL
+/// - `notification-slack-identifier` → WATCHTOWER_NOTIFICATION_SLACK_IDENTIFIER (default: watchtower)
+/// - `notification-slack-channel` → WATCHTOWER_NOTIFICATION_SLACK_CHANNEL
+/// - `notification-slack-icon-emoji` → WATCHTOWER_NOTIFICATION_SLACK_ICON_EMOJI
+/// - `notification-slack-icon-url` → WATCHTOWER_NOTIFICATION_SLACK_ICON_URL
+///
+/// Microsoft Teams Notification:
+/// - `notification-msteams-hook` → WATCHTOWER_NOTIFICATION_MSTEAMS_HOOK_URL
+/// - `notification-msteams-data` → WATCHTOWER_NOTIFICATION_MSTEAMS_USE_LOG_DATA
+///
+/// Gotify Notification:
+/// - `notification-gotify-url` → WATCHTOWER_NOTIFICATION_GOTIFY_URL
+/// - `notification-gotify-token` → WATCHTOWER_NOTIFICATION_GOTIFY_TOKEN
+/// - `notification-gotify-tls-skip-verify` → WATCHTOWER_NOTIFICATION_GOTIFY_TLS_SKIP_VERIFY
+#[allow(dead_code)]
+pub struct NotificationFlagsInfo;
+
 #[cfg(test)]
 mod tests {
     use super::*;
