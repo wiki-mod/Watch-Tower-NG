@@ -550,7 +550,7 @@ pub struct NotificationArgs {
     pub log_stdout: bool,
 
     /// Enable porcelain output compatibility.
-    #[arg(long = "porcelain", env = "WATCHTOWER_PORCELAIN", value_enum)]
+    #[arg(short = 'P', long = "porcelain", env = "WATCHTOWER_PORCELAIN", value_enum)]
     pub porcelain: Option<PorcelainVersion>,
 
     /// When to warn about HEAD pull failures.
