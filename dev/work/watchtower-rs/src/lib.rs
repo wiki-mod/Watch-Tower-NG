@@ -491,26 +491,22 @@ impl WatchtowerApp {
         )
     }
 
-    fn run_multiple_instance_protection_phase(&self, plan: &RootExecutionPlan) -> Result<()> {
+    fn run_multiple_instance_protection_phase(&self, _plan: &RootExecutionPlan) -> Result<()> {
         let client = DockerCliAdapter::new();
         let containers =
             self.filtered_watchtower_containers(&client, RootPhase::MultipleInstanceProtection)?;
 
-        if self.watchtower_cleanup_plan(&containers).is_none() {
+        if containers.len() <= 1 {
             return Ok(());
         }
 
-        self.runtime_adapter_blocker(
-            RootPhase::MultipleInstanceProtection,
-            format!(
-                "legacy CheckForMultipleWatchtowerInstances still needs cleanup execution for {:?} before {:?}",
-                containers
-                    .iter()
-                    .map(|container| container.name().to_string())
-                    .collect::<Vec<_>>(),
-                plan.http_api.routes
-            ),
-        )
+        actions::check_for_multiple_watchtower_instances(&client, &containers, self.config.cleanup)
+            .map_err(|error| {
+                Error::RuntimeAdapterMissing {
+                    phase: RootPhase::MultipleInstanceProtection,
+                    detail: format!("failed to cleanup excess watchtower instances: {}", error),
+                }
+            })
     }
 
     fn apply_http_api_start_phase(&self, plan: &RootExecutionPlan) -> Result<()> {
@@ -523,10 +519,10 @@ impl WatchtowerApp {
 
     fn register_metrics_http_route(&self, api: &mut crate::api::Api) {
         let metrics_handler = crate::api_metrics::ApiMetrics::legacy();
-        let (path, handle, metrics) = metrics_handler.into_parts();
+        let (path, handle) = metrics_handler.into_parts();
 
         api.register_func(path, move |_| {
-            crate::api::HttpResponse::plain(200, handle(&metrics))
+            crate::api::HttpResponse::plain(200, handle())
         });
     }
 
@@ -615,12 +611,6 @@ impl WatchtowerApp {
         })
     }
 
-    fn watchtower_cleanup_plan(
-        &self,
-        containers: &[Container],
-    ) -> Option<actions::WatchtowerInstanceCleanupPlan> {
-        actions::check_for_multiple_watchtower_instances(containers, self.config.cleanup)
-    }
 
     fn filter_description(&self) -> String {
         crate::filters::build_filter_description(
@@ -903,16 +893,10 @@ mod tests {
         let filtered = app
             .filtered_watchtower_containers(&client, RootPhase::MultipleInstanceProtection)
             .expect("filtering should succeed");
-        let plan = app.watchtower_cleanup_plan(&filtered);
 
         assert_eq!(filtered.len(), 2);
         assert_eq!(filtered[0].name(), "watchtower-old");
         assert_eq!(filtered[1].name(), "watchtower-new");
-        assert!(plan.is_some());
-        assert_eq!(
-            plan.expect("cleanup plan should exist").stop_container_ids,
-            vec![crate::types::ContainerID::new("watchtower-old")]
-        );
     }
 
     #[test]
@@ -979,26 +963,5 @@ mod tests {
                 .update_lock_shared_between_scheduler_and_api
         );
         assert!(plan.shared_runtime.shutdown_waits_for_running_update);
-    }
-
-    #[test]
-    fn watchtower_cleanup_plan_is_none_for_a_single_instance() {
-        let app = WatchtowerApp::new(AppConfig {
-            scope: Some("prod".to_string()),
-            cleanup: true,
-            ..base_config()
-        });
-        let containers = vec![runtime_container(
-            "watchtower-single",
-            "watchtower-single",
-            "2024-06-20T12:00:00Z",
-            &[
-                ("com.centurylinklabs.watchtower", "true"),
-                ("com.centurylinklabs.watchtower.scope", "prod"),
-            ],
-            &[],
-        )];
-
-        assert!(app.watchtower_cleanup_plan(&containers).is_none());
     }
 }
