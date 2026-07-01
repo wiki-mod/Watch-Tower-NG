@@ -6,8 +6,6 @@
 //! migration to preserve registry-auth fallback behavior without pulling in the
 //! full Docker client.
 
-use crate::types::FilterableContainer;
-
 use super::digest::DigestError;
 use super::trust;
 
@@ -83,18 +81,12 @@ pub fn decide_pull_action(
     }
 }
 
-/// Return whether the registry is expected to warrant an API-consumption warning.
-///
-/// The fail-closed behavior matches the Go helper: malformed image references
-/// or registry helper errors are treated as warning cases.
-#[must_use]
-pub fn warn_on_api_consumption(container: &impl FilterableContainer) -> bool {
-    trust::warn_on_api_consumption(container.image_name()).unwrap_or(true)
-}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::warn_on_api_consumption;
+    use crate::types::FilterableContainer;
 
     #[derive(Debug)]
     struct TestContainer {

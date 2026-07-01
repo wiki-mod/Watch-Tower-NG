@@ -68,6 +68,8 @@ pub fn default_auth_handler() -> String {
 /// errors in parsing the container image name. It returns `false` (no warn)
 /// only for explicitly known registries other than Docker Hub and GHCR.
 ///
+/// Mirrors Go's `WarnOnAPIConsumption` in `old-source/pkg/registry/registry.go`.
+///
 /// # Parameters
 ///
 /// * `container` - A container implementing FilterableContainer trait
@@ -77,7 +79,15 @@ pub fn default_auth_handler() -> String {
 /// `true` if a warning should be issued, `false` otherwise.
 #[must_use]
 pub fn warn_on_api_consumption(container: &impl FilterableContainer) -> bool {
-    trust::warn_on_api_consumption(container.image_name()).unwrap_or(true)
+    let registry = match super::helpers::get_registry_address(container.image_name()) {
+        Ok(addr) => addr,
+        Err(_) => return true, // Fail closed: warn if parsing fails
+    };
+
+    matches!(
+        registry.as_str(),
+        "index.docker.io" | "registry-1.docker.io" | "ghcr.io"
+    )
 }
 
 #[cfg(test)]
