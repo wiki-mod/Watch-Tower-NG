@@ -10,6 +10,9 @@ pub trait ContainerLike {
     fn name(&self) -> &str;
     fn image_name(&self) -> &str;
     fn current_image_id(&self) -> &ImageID;
+    /// Return the current image ID, or empty string if image info is unavailable.
+    /// Mirrors Go's SafeImageID() semantics exactly: returns empty when imageInfo is nil.
+    fn safe_image_id(&self) -> ImageID;
 }
 
 /// Session state for a container during a single update run.

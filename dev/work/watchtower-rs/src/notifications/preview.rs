@@ -1,8 +1,12 @@
 #![forbid(unsafe_code)]
 
 pub(crate) mod data;
-pub(crate) mod logs;
+pub mod logs;
 pub(crate) mod preview_strings;
-pub(crate) mod report;
+pub mod report;
 pub(crate) mod status;
-pub(crate) mod tplprev;
+pub mod tplprev;
+
+pub use logs::LogLevel;
+pub use report::State;
+pub use tplprev::render;

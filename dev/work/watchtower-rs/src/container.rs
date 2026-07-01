@@ -783,6 +783,12 @@ impl crate::session::ContainerLike for Container {
     fn current_image_id(&self) -> &ImageID {
         self.image_id()
     }
+
+    fn safe_image_id(&self) -> ImageID {
+        self.safe_image_id()
+            .cloned()
+            .unwrap_or_else(|| ImageID::new(""))
+    }
 }
 
 impl RuntimeContainer for Container {

@@ -1,8 +1,6 @@
 #![forbid(unsafe_code)]
 
 use std::collections::BTreeMap;
-use std::thread;
-use std::time::Duration;
 
 use watchtower_rs::api::{Api, HttpRequest, HttpResponse};
 use watchtower_rs::api_metrics::{ApiMetrics, PATH};
@@ -14,10 +12,8 @@ const TOKEN: &str = "123123123";
 fn should_serve_metrics() {
     let api = Api::new(TOKEN);
     let metrics_handler = ApiMetrics::legacy();
-    let (path, handle, metrics) = metrics_handler.into_parts();
-    let metrics_for_handler = metrics.clone();
-    let handle_req =
-        api.require_token(move |_| HttpResponse::plain(200, handle(&metrics_for_handler)));
+    let (path, handle) = metrics_handler.into_parts();
+    let handle_req = api.require_token(move |_| HttpResponse::plain(200, handle()));
 
     assert_eq!(path, PATH);
     assert_metrics_match(
@@ -30,7 +26,6 @@ fn should_serve_metrics() {
         updated: 3,
         failed: 1,
     }));
-    wait_for_queue_empty(&metrics);
 
     assert_metrics_match(
         &get_with_token(handle_req.as_ref(), path),
@@ -46,7 +41,6 @@ fn should_serve_metrics() {
     for _ in 0..3 {
         metrics::RegisterScan(None);
     }
-    wait_for_queue_empty(&metrics);
 
     assert_metrics_match(
         &get_with_token(handle_req.as_ref(), path),
@@ -95,14 +89,3 @@ fn assert_metrics_match(actual: &BTreeMap<String, String>, expected: &[(&str, &s
     }
 }
 
-fn wait_for_queue_empty(metrics: &metrics::Metrics) {
-    for _ in 0..100 {
-        if metrics.QueueIsEmpty() {
-            return;
-        }
-
-        thread::sleep(Duration::from_millis(10));
-    }
-
-    assert!(metrics.QueueIsEmpty());
-}

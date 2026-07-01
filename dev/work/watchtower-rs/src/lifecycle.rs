@@ -22,18 +22,6 @@ pub trait LifecycleClient {
     ) -> std::result::Result<bool, Self::Error>;
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HookOutcome {
-    Executed { skip_update: bool },
-    Skipped(HookSkipReason),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HookSkipReason {
-    MissingCommand,
-    ContainerNotRunning,
-    ContainerRestarting,
-}
 
 /// ExecutePreChecks tries to run the pre-check lifecycle hook for all
 /// containers included by the current filter.
@@ -119,11 +107,11 @@ pub fn execute_post_check_command<C: LifecycleClient>(client: &C, container: &Co
 }
 
 /// ExecutePreUpdateCommand tries to run the pre-update lifecycle hook for a
-/// single container.
+/// single container. Returns a bool indicating whether to skip the update.
 pub fn execute_pre_update_command<C: LifecycleClient>(
     client: &C,
     container: &Container,
-) -> std::result::Result<HookOutcome, C::Error> {
+) -> std::result::Result<bool, C::Error> {
     let timeout = container.pre_update_timeout();
     let command = container.get_lifecycle_pre_update_command();
 
@@ -132,7 +120,7 @@ pub fn execute_pre_update_command<C: LifecycleClient>(
             container = container.name(),
             "No pre-update command supplied. Skipping"
         );
-        return Ok(HookOutcome::Skipped(HookSkipReason::MissingCommand));
+        return Ok(false);
     }
 
     if !container.is_running() || container.is_restarting() {
@@ -140,19 +128,14 @@ pub fn execute_pre_update_command<C: LifecycleClient>(
             container = container.name(),
             "Container is not running. Skipping pre-update command."
         );
-        return Ok(HookOutcome::Skipped(if container.is_restarting() {
-            HookSkipReason::ContainerRestarting
-        } else {
-            HookSkipReason::ContainerNotRunning
-        }));
+        return Ok(false);
     }
 
     debug!(
         container = container.name(),
         "Executing pre-update command."
     );
-    let skip_update = client.execute_command(container.id(), &command, timeout)?;
-    Ok(HookOutcome::Executed { skip_update })
+    client.execute_command(container.id(), &command, timeout)
 }
 
 /// ExecutePostUpdateCommand tries to run the post-update lifecycle hook for a
@@ -393,16 +376,16 @@ mod tests {
 
         assert_eq!(
             execute_pre_update_command(&client, &missing).expect("missing command is a no-op"),
-            HookOutcome::Skipped(HookSkipReason::MissingCommand)
+            false
         );
         assert_eq!(
             execute_pre_update_command(&client, &stopped).expect("stopped container is a no-op"),
-            HookOutcome::Skipped(HookSkipReason::ContainerNotRunning)
+            false
         );
         assert_eq!(
             execute_pre_update_command(&client, &restarting)
                 .expect("restarting container is a no-op"),
-            HookOutcome::Skipped(HookSkipReason::ContainerRestarting)
+            false
         );
     }
 
@@ -420,10 +403,10 @@ mod tests {
         );
         let client = MockClient::new(Ok(Vec::new())).with_exec_results([Ok(true)]);
 
-        let outcome =
+        let skip_update =
             execute_pre_update_command(&client, &container).expect("pre-update should execute");
 
-        assert_eq!(outcome, HookOutcome::Executed { skip_update: true });
+        assert_eq!(skip_update, true);
         assert_eq!(
             client.exec_calls(),
             vec![ExecCall {

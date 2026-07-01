@@ -3,7 +3,6 @@
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
-use std::process::Command;
 
 use tracing::debug;
 use url::Url;
@@ -214,78 +213,40 @@ struct ChallengeResponse {
 }
 
 fn execute_challenge_request(request: &ChallengeRequest) -> Result<ChallengeResponse, AuthError> {
-    let mut command = Command::new("curl");
-    command.args([
-        "--silent",
-        "--show-error",
-        "--fail",
-        "--location",
-        "--request",
-        "GET",
-        "--header",
-        &format!("Accept: {}", request.accept),
-        "--header",
-        &format!("User-Agent: {}", request.user_agent),
-        "--dump-header",
-        "-",
-        "--output",
-        "-",
-    ]);
+    let client = reqwest::blocking::Client::new();
+
+    let mut req = client
+        .get(&request.url)
+        .header("Accept", &request.accept)
+        .header("User-Agent", &request.user_agent);
 
     if let Some(authorization) = request.authorization.as_deref() {
-        command.args(["--header", &format!("Authorization: {authorization}")]);
+        req = req.header("Authorization", authorization);
     }
 
-    command.arg(&request.url);
+    let response = req
+        .send()
+        .map_err(|err| AuthError::ChallengeRequestFailed(err.to_string()))?;
 
-    let output = command
-        .output()
-        .map_err(|err| AuthError::ChallengeRequestFailed(format!("curl: {err}")))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        let reason = if stderr.is_empty() {
-            format!("curl exited with {}", output.status)
-        } else {
-            format!("curl exited with {}: {stderr}", output.status)
-        };
-        return Err(AuthError::ChallengeRequestFailed(reason));
-    }
-
-    parse_curl_response(&output.stdout)
-}
-
-fn parse_curl_response(output: &[u8]) -> Result<ChallengeResponse, AuthError> {
-    let response = String::from_utf8_lossy(output);
-    let (header_block, body) = response
-        .rsplit_once("\r\n\r\n")
-        .or_else(|| response.rsplit_once("\n\n"))
-        .ok_or_else(|| {
-            AuthError::ChallengeRequestFailed("unexpected challenge response format".to_string())
-        })?;
-
+    let status = format!("HTTP/1.1 {}", response.status());
     let mut headers = HashMap::new();
-    let mut status = String::new();
 
-    for line in header_block.lines() {
-        let line = line.trim_end_matches('\r');
-        if line.is_empty() {
-            continue;
-        }
-
-        if line.starts_with("HTTP/") {
-            status = line.to_string();
-            continue;
-        }
-
-        if let Some((name, value)) = line.split_once(':') {
-            headers.insert(name.trim().to_ascii_lowercase(), value.trim().to_string());
+    for (name, value) in response.headers().iter() {
+        let name_str = name.as_str().to_ascii_lowercase();
+        if let Ok(value_str) = value.to_str() {
+            headers.insert(name_str, value_str.to_string());
         }
     }
+
+    let body = response
+        .bytes()
+        .map_err(|err| AuthError::ChallengeRequestFailed(err.to_string()))?
+        .to_vec();
 
     Ok(ChallengeResponse {
         status,
         headers,
-        body: body.as_bytes().to_vec(),
+        body,
     })
 }
 

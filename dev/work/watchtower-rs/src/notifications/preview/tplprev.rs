@@ -21,8 +21,7 @@ use super::report::State;
 /// ```ignore
 /// func Render(input string, states []data.State, loglevels []data.LogLevel) (string, error)
 /// ```
-#[allow(dead_code)]
-pub(crate) fn render(
+pub fn render(
     input: &str,
     states: &[State],
     log_levels: &[LogLevel],

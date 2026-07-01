@@ -21,7 +21,7 @@ pub(super) fn update_from_container(
         container_id: cont.id().clone(),
         container_name: cont.name().to_string(),
         image_name: cont.image_name().to_string(),
-        old_image: cont.current_image_id().clone(),
+        old_image: cont.safe_image_id(),
         new_image,
         error: None,
         state,
@@ -38,7 +38,7 @@ impl Progress {
     /// Add a skipped container to the session.
     /// Mirrors Go's `Progress.AddSkipped`.
     pub fn add_skipped(&mut self, cont: &impl ContainerLike, err: impl ToString) {
-        let safe_image = cont.current_image_id().clone();
+        let safe_image = cont.safe_image_id();
         let mut update = update_from_container(cont, safe_image, State::Skipped);
         update.error = Some(err.to_string());
         self.add(update);
@@ -52,24 +52,30 @@ impl Progress {
 
     /// Mark containers as failed.
     /// Mirrors Go's `Progress.UpdateFailed`.
+    /// Panics if a container ID is not in the map, matching Go's direct indexing behavior.
     pub fn update_failed<E>(&mut self, failures: impl IntoIterator<Item = (ContainerID, E)>)
     where
         E: ToString,
     {
         for (id, err) in failures {
-            if let Some(entry) = self.0.get_mut(&id) {
-                entry.error = Some(err.to_string());
-                entry.state = State::Failed;
-            }
+            let entry = self
+                .0
+                .get_mut(&id)
+                .expect("container ID must exist in progress map");
+            entry.error = Some(err.to_string());
+            entry.state = State::Failed;
         }
     }
 
     /// Mark a previously scanned container as selected for update.
     /// Mirrors Go's `Progress.MarkForUpdate`.
+    /// Panics if the container ID is not in the map, matching Go's direct indexing behavior.
     pub fn mark_for_update(&mut self, container_id: &ContainerID) {
-        if let Some(entry) = self.0.get_mut(container_id) {
-            entry.state = State::Updated;
-        }
+        let entry = self
+            .0
+            .get_mut(container_id)
+            .expect("container ID must exist in progress map");
+        entry.state = State::Updated;
     }
 
     /// Create a Report from this Progress instance.
@@ -110,6 +116,9 @@ mod tests {
         }
         fn current_image_id(&self) -> &ImageID {
             &self.current_image_id
+        }
+        fn safe_image_id(&self) -> ImageID {
+            self.current_image_id.clone()
         }
     }
 
